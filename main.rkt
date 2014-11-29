@@ -97,8 +97,11 @@
 ;; xxx are floats the right representation of time? as time increases,
 ;; they will be less accurate and i quickly leave the optimal space of
 ;; [-1,1]. if i use bignums, then they'll increase in memory as time
-;; goes on.
+;; goes on. --- maybe have timelines keep track of their time and do
+;; internal modulo-ing
 (struct tl-state (tl time))
+
+;; xxx entity-component-system?
 
 (define (tlst-tick st step)
   (match-define (tl-state tl t) st)
@@ -109,6 +112,7 @@
   (tl-eval tl t))
 (define (tlst-add st comb new-tl)
   (match-define (tl-state tl t) st)
+  ;; xxx resetting adds it back again... which seems strange
   (tl-state (tl-superimpose comb tl (tl-delay new-tl t)) t))
 (define (tlst-reset st)
   (match-define (tl-state tl t) st)
