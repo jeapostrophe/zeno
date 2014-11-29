@@ -101,28 +101,26 @@
 ;; [-1,1]. if i use bignums, then they'll increase in memory as time
 ;; goes on. --- maybe have timelines keep track of their time and do
 ;; internal modulo-ing
-(struct tl-state (tl time val))
+(struct tlst (tl time val))
 
 ;; xxx entity-component-system?
 
-(define (tl-state/time tl nt)
+(define (tlst/time tl nt)
   ;; xxx how does this give events?
-  (tl-state tl nt (tl-eval tl nt)))
+  (tlst tl nt (tl-eval tl nt)))
 (define (tlst-tick st step)
-  (define nt (fl+ step (tl-state-time st)))
-  (tl-state/time (tl-state-tl st) nt))
-(define (tlst-read st)
-  (tl-state-val st))
+  (define nt (fl+ step (tlst-time st)))
+  (tlst/time (tlst-tl st) nt))
 (define (tlst-add st comb new-tl)
-  (define t (tl-state-time st))
-  (define tl (tl-state-tl st))
+  (define t (tlst-time st))
+  (define tl (tlst-tl st))
   ;; xxx resetting adds it back again... which seems strange
-  (struct-copy tl-state st
+  (struct-copy tlst st
                [tl (tl-superimpose comb tl (tl-delay new-tl t))]))
 (define (tlst-reset st)
-  (tlst-init (tl-state-tl st)))
+  (tlst-init (tlst-tl st)))
 (define (tlst-init tl)
-  (tl-state/time tl 0.0))
+  (tlst/time tl 0.0))
 
 (module+ test
   (require lux
@@ -238,7 +236,7 @@
              (struct-copy example w
                           [tl-st (tlst-tick (example-tl-st w) 1.0)]))
            (define (word-output w)
-             (match-define ps (tlst-read (example-tl-st w)))
+             (match-define ps (tlst-val (example-tl-st w)))
              ((example-gv w) (pin-over* (blank W H) ps)))])
 
   (call-with-chaos
