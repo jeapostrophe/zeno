@@ -45,6 +45,8 @@
          (first tls) (rest tls)))
 (define (tl-bind a b)
   (tl-superimpose (λ (av bv) (bv av)) a b))
+(define (tl-there-and-back tl)
+  (tl-append tl (tl-reverse tl)))
 
 (define (tl-eval tl t)
   (match tl
@@ -99,29 +101,28 @@
 ;; [-1,1]. if i use bignums, then they'll increase in memory as time
 ;; goes on. --- maybe have timelines keep track of their time and do
 ;; internal modulo-ing
-(struct tl-state (tl time))
+(struct tl-state (tl time val))
 
 ;; xxx entity-component-system?
 
-(define (tlst-tick st step)
-  (match-define (tl-state tl t) st)
+(define (tl-state/time tl nt)
   ;; xxx how does this give events?
-  (tl-state tl (fl+ step t)))
+  (tl-state tl nt (tl-eval tl nt)))
+(define (tlst-tick st step)
+  (define nt (fl+ step (tl-state-time st)))
+  (tl-state/time (tl-state-tl st) nt))
 (define (tlst-read st)
-  (match-define (tl-state tl t) st)
-  (tl-eval tl t))
+  (tl-state-val st))
 (define (tlst-add st comb new-tl)
-  (match-define (tl-state tl t) st)
+  (define t (tl-state-time st))
+  (define tl (tl-state-tl st))
   ;; xxx resetting adds it back again... which seems strange
-  (tl-state (tl-superimpose comb tl (tl-delay new-tl t)) t))
+  (struct-copy tl-state st
+               [tl (tl-superimpose comb tl (tl-delay new-tl t))]))
 (define (tlst-reset st)
-  (match-define (tl-state tl t) st)
-  (tl-state tl 0.0))
+  (tlst-init (tl-state-tl st)))
 (define (tlst-init tl)
-  (tl-state tl 0.0))
-
-(define (tl-there-and-back tl)
-  (tl-append tl (tl-reverse tl)))
+  (tl-state/time tl 0.0))
 
 (module+ test
   (require lux
