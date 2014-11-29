@@ -101,7 +101,7 @@
 ;; [-1,1]. if i use bignums, then they'll increase in memory as time
 ;; goes on. --- maybe have timelines keep track of their time and do
 ;; internal modulo-ing
-(struct tlst (tl time val))
+(struct tlst (tl t val))
 
 ;; xxx entity-component-system?
 
@@ -109,10 +109,10 @@
   ;; xxx how does this give events?
   (tlst tl nt (tl-eval tl nt)))
 (define (tlst-tick st step)
-  (define nt (fl+ step (tlst-time st)))
+  (define nt (fl+ step (tlst-t st)))
   (tlst/time (tlst-tl st) nt))
 (define (tlst-add st comb new-tl)
-  (define t (tlst-time st))
+  (define t (tlst-t st))
   (define tl (tlst-tl st))
   ;; xxx resetting adds it back again... which seems strange
   (struct-copy tlst st
