@@ -100,7 +100,6 @@
 ;; goes on.
 (struct tl-state (tl time))
 
-;; xxx how to add new animations?
 (define (tlst-tick st step)
   (match-define (tl-state tl t) st)
   ;; xxx how does this give events?
@@ -108,6 +107,9 @@
 (define (tlst-read st)
   (match-define (tl-state tl t) st)
   (tl-eval tl t))
+(define (tlst-add st comb new-tl)
+  (match-define (tl-state tl t) st)
+  (tl-state (tl-superimpose comb tl (tl-delay new-tl t)) t))
 (define (tlst-reset st)
   (match-define (tl-state tl t) st)
   (tl-state tl 0.0))
@@ -179,6 +181,7 @@
     (tl-bind
      (tl-loop (tl-scale spinning 360.0))
      (tl-superimpose*
+      ;; xxx this is awkward
       (λ (x-fls y-fls)
         (λ (a)
           (append (x-fls a) (y-fls a))))
@@ -203,8 +206,27 @@
               [(eq? e 'close)
                #f]
               [(key-event? e)
-               (struct-copy example w
-                            [tl-st (tlst-reset (example-tl-st w))])]
+               (match (let ()
+                        (local-require racket/class)
+                        (send e get-key-code))
+                 [#\space
+                  (struct-copy example w
+                               [tl-st (tlst-reset (example-tl-st w))])]
+                 [#\a
+                  (struct-copy example w
+                               [tl-st (tlst-add
+                                       (example-tl-st w)
+                                       append
+                                       (tl-map
+                                        (tl-scale (tl-unit (linear 5.0 100.0))
+                                                  60.0)
+                                        (λ (d)
+                                          (list (vector BCX BCY
+                                                        (colorize (disk d)
+                                                                  "green"))))))])]
+                 [k
+                  (printf "Ignoring ~v\n" k)
+                  w])]
               [else
                w]))
            (define (word-tick w)
