@@ -24,25 +24,25 @@
       M))
 
 (struct *tl (len val stepf) #:transparent)
-(define-syntax-rule (rec name val)
-  (letrec ([name val]) name))
-;; xxx rplace this with just "val" and adapt all the code below to
-;; deal with maybe-tls.
-(define (tl-const val)
-  (rec this (*tl 0.0 val (λ (step) this))))
-
 (define (tl len val stepf)
   (if (fl<= len 0.0)
-      (tl-const val)
+      val
       (*tl len val stepf)))
-(define tl-len *tl-len)
-(define tl-val *tl-val)
-(define tl-stepf *tl-stepf)
 
+(define (tl-len x)
+  (if (*tl? x)
+      (*tl-len x)
+      0.0))
+(define (tl-val x)
+  (if (*tl? x)
+      (*tl-val x)
+      x))
 ;; xxx i wonder if i can enforce that step is always 1.0. this would
 ;; simplify some of the event problems, but complicate scale.
-(define (tl-step tl step)
-  ((tl-stepf tl) step))
+(define (tl-step x step)
+  (if (*tl? x)
+      ((*tl-stepf x) step)
+      x))
 
 (define (tl-unit@ f tp)
   (define t (flclamp 0.0 tp 1.0))
@@ -129,24 +129,26 @@
               (hash-set val id (tl-val tl))
               (λ (ht step)
                 (stepf (hash-set ht id (tl-step tl step)) step)))))
-
-  (rec this
-       (*tls len val
-             (if (fl<= len 0.0)
-                 (λ (step) this)
-                 (λ (step)
-                   (tls/ (stepf (hasheq) step))))
-             id->tl)))
+  
+  (if (fl<= len 0.0)
+      val
+      (*tls len val
+            (λ (step)
+              (tls/ (stepf (hasheq) step)))
+            id->tl)))
 (define (tls)
-  (tls/ (hasheq)))
+  (hasheq))
 
 ;; xxx make this work on paths
-;; xxx allow fail on def
 ;; xxx tls-superimpose (a comp on each hash)
 ;; xxx tls-merge
-(define (tls-update tls id f def)
+(define (tls-update x id f 
+                    [def (λ () (error 'tls-update "There is no mapping for ~v in ~e."
+                                      id x))])
+  (define ht 
+    (if (*tls? x) (*tls-id->tl x) x))
   (define new-id->tl
-    (hash-update (*tls-id->tl tls) id f def))
+    (hash-update ht id f def))
   (tls/ new-id->tl))
 (define (tls-set tls id v)
   (tls-update tls id (λ (_) v) #f))
@@ -285,9 +287,6 @@
               [tl (tl-step (example-tl w) 1.0)]))
            (define (word-output w)
              (define ht (tl-val (example-tl w)))
-             (let ()
-               (local-require racket/pretty)
-               (printf "~e\n" (hash-ref (*tls-id->tl (example-tl w)) 'addtl #f)))
              (define main-ps (hash-ref ht 'main '()))
              (define addtl-ps (hash-ref ht 'addtl '()))
              ((example-gv w) (pin-over* (pin-over* (blank W H) main-ps) addtl-ps)))])
