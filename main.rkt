@@ -99,7 +99,7 @@
   (tl-append (tl-scale (tl-unit (const val)) delay) inner))
 
 (define (tl-superimpose* comb tls)
-  (foldr (λ (left right) (tl-superimpose comb left right))
+  (foldl (λ (right left) (tl-superimpose comb left right))
          (first tls) (rest tls)))
 (define (tl-bind a b)
   (tl-superimpose (λ (av bv) (bv av)) a b))
@@ -179,26 +179,29 @@
     ;; xxx do i want these as separate functions or things inside of
     ;; "timeline"
     (tl-map
-     (tl-superimpose
-      cons
-      (tl-superimpose
-       cons
+     (tls/
+      (hasheq
+       'radius
        (tl-loop
         (tl-scale (tl-append (tl-unit (linear 10.0 100.0))
                              (tl-unit (linear 100.0 10.0)))
                   120.0))
+       'color
        (tl-loop
         (tl-scale (tl-append (tl-unit (const "black")) (tl-unit (const "red")))
-                  30.0)))
-      (tl-superimpose
-       cons
+                  30.0))
+       'dx
        (tl-loop
         (tl-scale
          (tl-append left-to-right right-to-left)
          120.0))
+       'theta
        (tl-loop (tl-scale spinning 360.0))))
-     (match-lambda
-      [(cons (cons radius c) (cons d theta))
+     (λ (ht)
+       (define radius (hash-ref ht 'radius))
+       (define c (hash-ref ht 'color))
+       (define d (hash-ref ht 'dx))
+       (define theta (hash-ref ht 'theta))
        (λ (big-theta)
          (define C (make-polar BR (+ big-theta delta-big-theta)))
          (define CX (+ BCX (real-part C)))
@@ -213,7 +216,7 @@
                  (define p (make-polar radius ith-theta))
                  (vector (+ (+ CX d) (real-part p))
                          (+ CY (imag-part p))
-                         border-p))))])))
+                         border-p)))))))
 
   (define combined
     (tl-bind
@@ -239,11 +242,14 @@
       (match-define (vector _ _ p) x*y*p)
       (pin-line combined origin cc-find p cc-find)))
 
-  (define init-tl (tls-set (tls) 'main combined))
+  (define init-tl 
+    (tls-set (tls) 'main (tl-scale combined 0.5)))
 
   (struct example (gv tl)
           #:methods gen:word
-          [(define (word-event w e)
+          [(define (word-fps w)
+             30.0)
+           (define (word-event w e)
              (cond
               [(eq? e 'close)
                #f]
