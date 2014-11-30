@@ -23,104 +23,83 @@
       m
       M))
 
-(struct timeline ())
-(struct tl-unit timeline (f))
-(struct tl-superimpose timeline
-        (combiner left right))
-(struct tl-loop timeline
-        (inner))
-(struct tl-append timeline
-        (left right))
-(struct tl-reverse timeline
-        (inner))
-(struct tl-scale timeline
-        (inner scale))
-(struct tl-map timeline
-        (inner fun))
-(struct tl-delay timeline
-        (inner delay))
+(struct tl (len val stepf))
+(define (tl-step tl step)
+  ((tl-stepf tl) step))
+
+(define-syntax-rule (rec name val)
+  (letrec ([name val]) name))
+
+(define (tl-unit@ f tp)
+  (define t (flclamp 0.0 tp 1.0))
+  (rec this
+       (tl (fl- 1.0 t)
+           (f t)
+           (if (fl= 1.0 t)
+               (λ (step)
+                 this)
+               (λ (step)
+                 (tl-unit@ f (fl+ t step)))))))
+
+(define (tl-unit f)
+  (tl-unit@ f 0.0))
+
+(define (tl-superimpose comb left right)
+  (tl (max (tl-len left)
+           (tl-len right))
+      (comb (tl-val left)
+            (tl-val right))
+      (λ (step)
+        (tl-superimpose comb
+                        (tl-step left step)
+                        (tl-step right step)))))
+
+(define (tl-loop/ inner current)
+  (tl +inf.0
+      (tl-val current)
+      (λ (step)
+        (if (fl< step (tl-len current))
+            (tl-loop/ inner (tl-step current step))
+            (tl-loop/ inner (tl-step inner (fl- step (tl-len current))))))))
+
+(define (tl-loop inner)
+  (tl-loop/ inner inner))
+
+(define (tl-append left right)
+  (if (fl<= (tl-len left) 0.0)
+      right
+      (tl (fl+ (tl-len left)
+               (tl-len right))
+          (tl-val left)
+          (λ (step)
+            (if (fl< step (tl-len left))
+                (tl-append (tl-step left step) right)
+                (tl-step right (fl- step (tl-len left))))))))
+
+(define (tl-scale inner scale)
+  (if (fl= 0.0 (tl-len inner))
+      inner
+      (tl (fl* (tl-len inner) scale)
+          (tl-val inner)
+          (λ (step)
+            (tl-scale (tl-step inner (fl/ step scale)) scale)))))
+
+(define (tl-delay val delay inner)
+  (tl-append (tl-scale (tl-unit (const val)) delay) inner))
+
+(define (tl-map inner fun)
+  (tl (tl-len inner)
+      (fun (tl-val inner))
+      (λ (step)
+        (tl-map (tl-step inner step) fun))))
 
 (define (tl-superimpose* comb tls)
   (foldr (λ (left right) (tl-superimpose comb left right))
          (first tls) (rest tls)))
 (define (tl-bind a b)
   (tl-superimpose (λ (av bv) (bv av)) a b))
-(define (tl-there-and-back tl)
-  (tl-append tl (tl-reverse tl)))
-
-(define (tl-eval tl t)
-  (match tl
-    [(tl-unit f)
-     (f (flclamp 0.0 t 1.0))]
-    [(tl-superimpose comb left right)
-     (comb (tl-eval left t)
-           (tl-eval right t))]
-    [(tl-loop inner)
-     (tl-eval inner
-              (flmodulo t (tl-length inner)))]
-    [(tl-append left right)
-     (define left-len (tl-length left))
-     (if (fl<= t left-len)
-         (tl-eval left t)
-         (tl-eval right (fl- t left-len)))]
-    ;; xxx reverseing a loop show reverse the inside, but this just
-    ;; makes it time infinity all the time.
-    [(tl-reverse inner)
-     (define inner-len (tl-length inner))
-     (tl-eval inner (fl- inner-len t))]
-    [(tl-scale inner scale)
-     (tl-eval inner (fl/ t scale))]
-    [(tl-delay inner delay)
-     (tl-eval inner (fl- t delay))]
-    [(tl-map inner fun)
-     (fun (tl-eval inner t))]))
-
-;; xxx perhaps i should cache this
-(define (tl-length tl)
-  (match tl
-    [(tl-unit _)
-     1.0]
-    [(tl-superimpose comb left right)
-     (max (tl-length left)
-          (tl-length right))]
-    [(tl-loop inner)
-     +inf.0]
-    [(tl-append left right)
-     (fl+ (tl-length left) (tl-length right))]
-    [(tl-reverse inner)
-     (tl-length inner)]
-    [(tl-scale inner scale)
-     (fl* (tl-length inner) scale)]
-    [(tl-delay inner delay)
-     (fl+ (tl-length inner) delay)]
-    [(tl-map inner fun)
-     (tl-length inner)]))
-
-;; xxx are floats the right representation of time? as time increases,
-;; they will be less accurate and i quickly leave the optimal space of
-;; [-1,1]. if i use bignums, then they'll increase in memory as time
-;; goes on. --- maybe have timelines keep track of their time and do
-;; internal modulo-ing
-(struct tlst (tl t val))
 
 ;; xxx entity-component-system?
-
-(define (tlst/time tl nt)
-  ;; xxx how does this give events?
-  (tlst tl nt (tl-eval tl nt)))
-(define (tlst-tick st step)
-  (define nt (fl+ step (tlst-t st)))
-  (tlst/time (tlst-tl st) nt))
-(define (tlst-add st comb new-tl)
-  (define t (tlst-t st))
-  (define tl (tlst-tl st))
-  ;; xxx resetting adds it back again... which seems strange
-  (struct-copy tlst st
-               [tl (tl-superimpose comb tl (tl-delay new-tl t))]))
-(define (tlst-reset st)
-  (tlst-init (tlst-tl st)))
-(define (tlst-init tl)
-  (tlst/time tl 0.0))
 
 (module+ test
   (require lux
@@ -134,6 +113,8 @@
 
   (define left-to-right
     (tl-unit (linear (* -0.125 W) (* +0.125 W))))
+  (define right-to-left
+    (tl-unit (linear (* +0.125 W) (* -0.125 W))))
   (define spinning
     (tl-unit (linear 0.0 (fl* 2.0 pi))))
 
@@ -149,8 +130,10 @@
       (tl-superimpose
        cons
        (tl-loop
-        (tl-there-and-back
+        (tl-append
          (tl-scale (tl-unit (linear 10.0 100.0))
+                   60.0)
+         (tl-scale (tl-unit (linear 100.0 10.0))
                    60.0)))
        (tl-loop
         (tl-scale (tl-append (tl-unit (step "black" "red"))
@@ -159,8 +142,9 @@
       (tl-superimpose
        cons
        (tl-loop
-        (tl-there-and-back
-         (tl-scale left-to-right 60.0)))
+        (tl-append
+         (tl-scale left-to-right 60.0)
+         (tl-scale right-to-left 60.0)))
        (tl-loop (tl-scale spinning 360.0))))
      (match-lambda
       [(cons (cons radius c) (cons d theta))
@@ -190,7 +174,9 @@
           (append (x-fls a) (y-fls a))))
       (for/list ([i (in-range 4)])
         (define i.0 (fx->fl i))
-        (tl-delay (spinning-balls (fl/ (fl* i.0 pi) 2.0)) (fl* i.0 30.0))))))
+        (tl-delay (λ (a) empty)
+                  (fl* i.0 30.0)
+                  (spinning-balls (fl/ (fl* i.0 pi) 2.0)))))))
 
   (define (pin-over* base l)
     (for/fold ([base base]) ([x*y*p (in-list l)])
@@ -202,7 +188,7 @@
       (match-define (vector _ _ p) x*y*p)
       (pin-line combined origin cc-find p cc-find)))
 
-  (struct example (gv tl-st)
+  (struct example (gv tl)
           #:methods gen:word
           [(define (word-event w e)
              (cond
@@ -213,33 +199,37 @@
                         (local-require racket/class)
                         (send e get-key-code))
                  [#\space
-                  (struct-copy example w
-                               [tl-st (tlst-reset (example-tl-st w))])]
+                  (struct-copy
+                   example w
+                   [tl combined])]
                  [#\a
-                  (struct-copy example w
-                               [tl-st (tlst-add
-                                       (example-tl-st w)
-                                       append
-                                       (tl-map
-                                        (tl-scale (tl-unit (linear 5.0 100.0))
-                                                  60.0)
-                                        (λ (d)
-                                          (list (vector BCX BCY
-                                                        (colorize (disk d)
-                                                                  "green"))))))])]
+                  (struct-copy
+                   example w
+                   [tl
+                    (tl-superimpose
+                     append
+                     (example-tl w)
+                     (tl-map
+                      (tl-scale (tl-unit (linear 5.0 100.0))
+                                60.0)
+                      (λ (d)
+                        (list (vector BCX BCY
+                                      (colorize (disk d)
+                                                "green"))))))])]
                  [k
                   (printf "Ignoring ~v\n" k)
                   w])]
               [else
                w]))
            (define (word-tick w)
-             (struct-copy example w
-                          [tl-st (tlst-tick (example-tl-st w) 1.0)]))
+             (struct-copy
+              example w
+              [tl (tl-step (example-tl w) 1.0)]))
            (define (word-output w)
-             (match-define ps (tlst-val (example-tl-st w)))
+             (match-define ps (tl-val (example-tl w)))
              ((example-gv w) (pin-over* (blank W H) ps)))])
 
   (call-with-chaos
    (make-gui)
    (λ ()
-     (fiat-lux (example (make-gui/val) (tlst-init combined))))))
+     (fiat-lux (example (make-gui/val) combined)))))
