@@ -23,6 +23,7 @@
       m
       M))
 
+;; xxx maybe val should be a promise
 (struct tl (len val stepf))
 (define (tl-step tl step)
   ((tl-stepf tl) step))
@@ -30,16 +31,17 @@
 (define-syntax-rule (rec name val)
   (letrec ([name val]) name))
 
+(define (tl-const val)
+  (rec this (tl 0.0 val (λ (step) this))))
+
 (define (tl-unit@ f tp)
   (define t (flclamp 0.0 tp 1.0))
-  (rec this
-       (tl (fl- 1.0 t)
-           (f t)
-           (if (fl= 1.0 t)
-               (λ (step)
-                 this)
-               (λ (step)
-                 (tl-unit@ f (fl+ t step)))))))
+  (if (fl= 1.0 t)
+      (tl-const (f t))
+      (tl (fl- 1.0 t)
+          (f t)
+          (λ (step)
+            (tl-unit@ f (fl+ t step))))))
 
 (define (tl-unit f)
   (tl-unit@ f 0.0))
@@ -100,6 +102,30 @@
   (tl-superimpose (λ (av bv) (bv av)) a b))
 
 ;; xxx entity-component-system?
+
+(struct *tls tl (id->tl))
+(define (tls/ id->tl)
+  (define-values (len val stepf)
+    (for/fold ([len 0.0]
+               [val (hasheq)]
+               [stepf (λ (ht step) ht)])
+              ([(id tl) (in-hash id->tl)])
+      (values (fl+ len (tl-len tl))
+              (hash-set val id (tl-val tl))
+              (λ (ht step)
+                (stepf (hash-set ht id (tl-step tl step)) step)))))
+  (*tls len val
+        (λ (step)
+          (tls/ (stepf (hasheq) step)))
+        id->tl))
+(define (tls)
+  (tls/ (hasheq)))
+(define (tls-update tls id f def)
+  (define new-id->tl
+    (hash-update (*tls-id->tl tls) id f def))
+  (tls/ new-id->tl))
+(define (tls-set tls id v)
+  (tls-update tls id (λ (_) v) #f))
 
 (module+ test
   (require lux
@@ -188,6 +214,8 @@
       (match-define (vector _ _ p) x*y*p)
       (pin-line combined origin cc-find p cc-find)))
 
+  (define init-tl (tls-set (tls) 'main combined))
+
   (struct example (gv tl)
           #:methods gen:word
           [(define (word-event w e)
@@ -201,21 +229,26 @@
                  [#\space
                   (struct-copy
                    example w
-                   [tl combined])]
+                   [tl init-tl])]
                  [#\a
                   (struct-copy
                    example w
                    [tl
-                    (tl-superimpose
-                     append
+                    (tls-update
                      (example-tl w)
-                     (tl-map
-                      (tl-scale (tl-unit (linear 5.0 100.0))
-                                60.0)
-                      (λ (d)
-                        (list (vector BCX BCY
-                                      (colorize (disk d)
-                                                "green"))))))])]
+                     'main
+                     (λ (old-tl)
+                       (tl-superimpose
+                        append
+                        old-tl
+                        (tl-map
+                         (tl-scale (tl-unit (linear 5.0 100.0))
+                                   60.0)
+                         (λ (d)
+                           (list (vector BCX BCY
+                                         (colorize (disk d)
+                                                   "green")))))))
+                     #f)])]
                  [k
                   (printf "Ignoring ~v\n" k)
                   w])]
@@ -226,10 +259,10 @@
               example w
               [tl (tl-step (example-tl w) 1.0)]))
            (define (word-output w)
-             (match-define ps (tl-val (example-tl w)))
+             (match-define ps (hash-ref (tl-val (example-tl w)) 'main))
              ((example-gv w) (pin-over* (blank W H) ps)))])
 
   (call-with-chaos
    (make-gui)
    (λ ()
-     (fiat-lux (example (make-gui/val) combined)))))
+     (fiat-lux (example (make-gui/val) init-tl)))))
