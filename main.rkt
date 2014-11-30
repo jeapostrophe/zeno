@@ -96,15 +96,14 @@
       (tl-val inner)
       (λ (step)
         (tl-scale (tl-step inner (fl/ step scale)) scale))))
-
-(define (tl-delay val delay inner)
-  (tl-append (tl-scale (tl-unit (const val)) delay) inner))
-
 (define (tl-map inner fun)
   (tl (tl-len inner)
       (fun (tl-val inner))
       (λ (step)
         (tl-map (tl-step inner step) fun))))
+
+(define (tl-delay val delay inner)
+  (tl-append (tl-scale (tl-unit (const val)) delay) inner))
 
 (define (tl-superimpose* comb tls)
   (foldr (λ (left right) (tl-superimpose comb left right))
