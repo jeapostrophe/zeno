@@ -37,8 +37,6 @@
   (if (*tl? x)
       (*tl-val x)
       x))
-;; xxx i wonder if i can enforce that step is always 1.0. this would
-;; simplify some of the event problems, but complicate scale.
 (define (tl-step x step)
   (if (*tl? x)
       ((*tl-stepf x) step)
@@ -68,9 +66,6 @@
   (tl +inf.0
       (tl-val current)
       (λ (step)
-        ;; xxx if there is any time left on current, then we're
-        ;; ignoring it, which may complicate the event system by
-        ;; skipping events
         (if (fl< step (tl-len current))
             (tl-loop/ inner (tl-step current step))
             (tl-loop/ inner (tl-step inner (fl- step (tl-len current))))))))
@@ -85,12 +80,10 @@
                (tl-len right))
           (tl-val left)
           (λ (step)
-            ;; xxx again, i may be skipping time
             (if (fl< step (tl-len left))
                 (tl-append (tl-step left step) right)
                 (tl-step right (fl- step (tl-len left))))))))
 
-;; xxx "canceling" a scale is painful because it leaves cruft.
 (define (tl-scale inner scale)
   (tl (fl* (tl-len inner) scale)
       (tl-val inner)
@@ -255,11 +248,7 @@
               [(eq? e 'close)
                #f]
               [(key-event? e)
-               (match (let ()
-                        ;; xxx put this in gui/key (and something
-                        ;; similar for gui/mouse)
-                        (local-require racket/class)
-                        (send e get-key-code))
+               (match (key-event-code e)
                  [#\space
                   (struct-copy
                    example w
