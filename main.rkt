@@ -129,7 +129,7 @@
               (hash-set val id (tl-val tl))
               (λ (ht step)
                 (stepf (hash-set ht id (tl-step tl step)) step)))))
-  
+
   (if (fl<= len 0.0)
       val
       (*tls len val
@@ -140,23 +140,28 @@
   (hasheq))
 
 ;; xxx make this work on paths
-;; xxx tls-superimpose (a comp on each hash)
-;; xxx tls-merge
-(define (tls-update x id f 
+(define (tls-id->tl x)
+  (if (*tls? x) (*tls-id->tl x) x))
+(define (tls-modify x f)
+  (tls/ (f (tls-id->tl x))))
+(define (tls-update x id f
                     [def (λ () (error 'tls-update "There is no mapping for ~v in ~e."
                                       id x))])
-  (define ht 
-    (if (*tls? x) (*tls-id->tl x) x))
-  (define new-id->tl
-    (hash-update ht id f def))
-  (tls/ new-id->tl))
-(define (tls-set tls id v)
-  (tls-update tls id (λ (_) v) #f))
-
-;; xxx very important to be able to remove things, because this is
-;; like a global heap. i do NOT want a weak hash, because things
-;; should only stop when they are totally gone. (this would be very
-;; important for the event system)
+  (tls-modify x (λ (ht) (hash-update ht id f def))))
+(define (tls-set x id v)
+  (tls-modify x (λ (ht) (hash-set ht id v))))
+(define (tls-remove x id)
+  (tls-modify x (λ (ht) (hash-remove ht id))))
+(define (tls-superimpose id->comb left right)
+  (tls/
+   (for/fold ([id->tl (tls-id->tl left)])
+             ([(id tl) (in-hash (tls-id->tl right))])
+     (if (hash-has-key? id->tl id)
+         (hash-update id->tl id
+                      (λ (old-tl)
+                        (define comb (hash-ref id->comb id))
+                        (tl-superimpose comb old-tl tl)))
+         (hash-set id->tl id tl)))))
 
 (module+ test
   (require lux
@@ -260,6 +265,17 @@
                   (struct-copy
                    example w
                    [tl init-tl])]
+                 [#\z
+                  (struct-copy
+                   example w
+                   [tl (tls-superimpose (hasheq 'addtl append
+                                                'main append)
+                                        (example-tl w)
+                                        init-tl)])]
+                 [#\r
+                  (struct-copy
+                   example w
+                   [tl (tls-remove (example-tl w) 'addtl)])]
                  [#\a
                   (struct-copy
                    example w
