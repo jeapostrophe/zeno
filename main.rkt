@@ -23,32 +23,40 @@
       m
       M))
 
-;; xxx maybe val should be a promise
-(struct tl (len val stepf))
+(struct *tl (len val stepf) #:transparent)
+(define-syntax-rule (rec name val)
+  (letrec ([name val]) name))
+;; xxx rplace this with just "val" and adapt all the code below to
+;; deal with maybe-tls.
+(define (tl-const val)
+  (rec this (*tl 0.0 val (λ (step) this))))
+
+(define (tl len val stepf)
+  (if (fl<= len 0.0)
+      (tl-const val)
+      (*tl len val stepf)))
+(define tl-len *tl-len)
+(define tl-val *tl-val)
+(define tl-stepf *tl-stepf)
+
+;; xxx i wonder if i can enforce that step is always 1.0. this would
+;; simplify some of the event problems, but complicate scale.
 (define (tl-step tl step)
   ((tl-stepf tl) step))
 
-(define-syntax-rule (rec name val)
-  (letrec ([name val]) name))
-
-(define (tl-const val)
-  (rec this (tl 0.0 val (λ (step) this))))
-
 (define (tl-unit@ f tp)
   (define t (flclamp 0.0 tp 1.0))
-  (if (fl= 1.0 t)
-      (tl-const (f t))
-      (tl (fl- 1.0 t)
-          (f t)
-          (λ (step)
-            (tl-unit@ f (fl+ t step))))))
+  (tl (fl- 1.0 t)
+      (f t)
+      (λ (step)
+        (tl-unit@ f (fl+ t step)))))
 
 (define (tl-unit f)
   (tl-unit@ f 0.0))
 
 (define (tl-superimpose comb left right)
-  (tl (max (tl-len left)
-           (tl-len right))
+  (tl (flmax (tl-len left)
+             (tl-len right))
       (comb (tl-val left)
             (tl-val right))
       (λ (step)
@@ -60,6 +68,9 @@
   (tl +inf.0
       (tl-val current)
       (λ (step)
+        ;; xxx if there is any time left on current, then we're
+        ;; ignoring it, which may complicate the event system by
+        ;; skipping events
         (if (fl< step (tl-len current))
             (tl-loop/ inner (tl-step current step))
             (tl-loop/ inner (tl-step inner (fl- step (tl-len current))))))))
@@ -74,17 +85,17 @@
                (tl-len right))
           (tl-val left)
           (λ (step)
+            ;; xxx again, i may be skipping time
             (if (fl< step (tl-len left))
                 (tl-append (tl-step left step) right)
                 (tl-step right (fl- step (tl-len left))))))))
 
+;; xxx "canceling" a scale is painful because it leaves cruft.
 (define (tl-scale inner scale)
-  (if (fl= 0.0 (tl-len inner))
-      inner
-      (tl (fl* (tl-len inner) scale)
-          (tl-val inner)
-          (λ (step)
-            (tl-scale (tl-step inner (fl/ step scale)) scale)))))
+  (tl (fl* (tl-len inner) scale)
+      (tl-val inner)
+      (λ (step)
+        (tl-scale (tl-step inner (fl/ step scale)) scale))))
 
 (define (tl-delay val delay inner)
   (tl-append (tl-scale (tl-unit (const val)) delay) inner))
@@ -103,7 +114,11 @@
 
 ;; xxx entity-component-system?
 
-(struct *tls tl (id->tl))
+;; xxx something i dislike about these is that they require a
+;; computation outside analyze the values. but maybe that IS the
+;; "system" concept
+
+(struct *tls *tl (id->tl) #:transparent)
 (define (tls/ id->tl)
   (define-values (len val stepf)
     (for/fold ([len 0.0]
@@ -114,18 +129,32 @@
               (hash-set val id (tl-val tl))
               (λ (ht step)
                 (stepf (hash-set ht id (tl-step tl step)) step)))))
-  (*tls len val
-        (λ (step)
-          (tls/ (stepf (hasheq) step)))
-        id->tl))
+
+  (rec this
+       (*tls len val
+             (if (fl<= len 0.0)
+                 (λ (step) this)
+                 (λ (step)
+                   (tls/ (stepf (hasheq) step))))
+             id->tl)))
 (define (tls)
   (tls/ (hasheq)))
+
+;; xxx make this work on paths
+;; xxx allow fail on def
+;; xxx tls-superimpose (a comp on each hash)
+;; xxx tls-merge
 (define (tls-update tls id f def)
   (define new-id->tl
     (hash-update (*tls-id->tl tls) id f def))
   (tls/ new-id->tl))
 (define (tls-set tls id v)
   (tls-update tls id (λ (_) v) #f))
+
+;; xxx very important to be able to remove things, because this is
+;; like a global heap. i do NOT want a weak hash, because things
+;; should only stop when they are totally gone. (this would be very
+;; important for the event system)
 
 (module+ test
   (require lux
@@ -156,21 +185,18 @@
       (tl-superimpose
        cons
        (tl-loop
-        (tl-append
-         (tl-scale (tl-unit (linear 10.0 100.0))
-                   60.0)
-         (tl-scale (tl-unit (linear 100.0 10.0))
-                   60.0)))
+        (tl-scale (tl-append (tl-unit (linear 10.0 100.0))
+                             (tl-unit (linear 100.0 10.0)))
+                  120.0))
        (tl-loop
-        (tl-scale (tl-append (tl-unit (step "black" "red"))
-                             (tl-unit (step "red" "black")))
+        (tl-scale (tl-append (tl-unit (const "black")) (tl-unit (const "red")))
                   30.0)))
       (tl-superimpose
        cons
        (tl-loop
-        (tl-append
-         (tl-scale left-to-right 60.0)
-         (tl-scale right-to-left 60.0)))
+        (tl-scale
+         (tl-append left-to-right right-to-left)
+         120.0))
        (tl-loop (tl-scale spinning 360.0))))
      (match-lambda
       [(cons (cons radius c) (cons d theta))
@@ -224,6 +250,8 @@
                #f]
               [(key-event? e)
                (match (let ()
+                        ;; xxx put this in gui/key (and something
+                        ;; similar for gui/mouse)
                         (local-require racket/class)
                         (send e get-key-code))
                  [#\space
@@ -236,18 +264,15 @@
                    [tl
                     (tls-update
                      (example-tl w)
-                     'main
+                     'addtl
                      (λ (old-tl)
-                       (tl-superimpose
-                        append
-                        old-tl
-                        (tl-map
-                         (tl-scale (tl-unit (linear 5.0 100.0))
-                                   60.0)
-                         (λ (d)
-                           (list (vector BCX BCY
-                                         (colorize (disk d)
-                                                   "green")))))))
+                       (tl-map
+                        (tl-scale (tl-unit (linear 5.0 100.0))
+                                  60.0)
+                        (λ (d)
+                          (list (vector BCX BCY
+                                        (colorize (disk d)
+                                                  "green"))))))
                      #f)])]
                  [k
                   (printf "Ignoring ~v\n" k)
@@ -259,8 +284,13 @@
               example w
               [tl (tl-step (example-tl w) 1.0)]))
            (define (word-output w)
-             (match-define ps (hash-ref (tl-val (example-tl w)) 'main))
-             ((example-gv w) (pin-over* (blank W H) ps)))])
+             (define ht (tl-val (example-tl w)))
+             (let ()
+               (local-require racket/pretty)
+               (printf "~e\n" (hash-ref (*tls-id->tl (example-tl w)) 'addtl #f)))
+             (define main-ps (hash-ref ht 'main '()))
+             (define addtl-ps (hash-ref ht 'addtl '()))
+             ((example-gv w) (pin-over* (pin-over* (blank W H) main-ps) addtl-ps)))])
 
   (call-with-chaos
    (make-gui)
