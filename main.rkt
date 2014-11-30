@@ -178,7 +178,13 @@
   (define (spinning-balls delta-big-theta)
     ;; xxx do i want these as separate functions or things inside of
     ;; "timeline"
-    (tl-map
+    (tl-map     
+     ;; (timeline
+     ;;  #:key [  0.0 (['radius  10.0])]
+     ;;  #:tween (['radius linear])
+     ;;  #:key [ 60.0 (['radius 100.0])]
+     ;;  #:tween (['radius linear])
+     ;;  #:key [120.0 (['radius  10.0])])
      (tls/
       (hasheq
        'radius
