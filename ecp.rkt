@@ -103,7 +103,8 @@
             (for/list ([ps (in-list po)])
               (for/list ([p (in-list ps)])
                 (define-values (com-set init) (p sys))
-                (hash-set! (*system-interests sys) com-set #t)
+                (hash-set! (*system-interests sys) com-set
+                           (mutable-seteq))
                 (cons com-set init))))
 
   sys)
@@ -123,8 +124,7 @@
 (define (system-process sys cs*i)
   (match-define (cons com-set init) cs*i)
   (define process-entity (init))
-  (for ([e (in-entities sys)]
-        #:when (entity-has? sys e com-set))
+  (for ([e (in-list (matching-entitites sys com-set))])
     (process-entity e)))
 
 (define (entity-alloc! sys)
@@ -138,17 +138,27 @@
   e)
 (define (entity-delete! sys e)
   (define es (*system-es sys))
+  ;; xxx part of has-not!
+  (for ([(com-set es) (in-hash (*system-interests sys))])
+    (set-remove! es e))
   (gvector-free! es e))
 
-(define (in-entities sys)
-  ;; xxx it is necessary to get them all first because we might remove
-  ;; entities in the middle of systems.
-  (in-list (gvector-keys (*system-es sys))))
+(define (matching-entitites sys com-set)
+  (let/ec esc
+    ;; xxx it is necessary to get them all first because we might remove
+    ;; entities in the middle of systems.
+    (set->list
+     (hash-ref (*system-interests sys) com-set
+               (λ () (esc '()))))))
 (define (entity-has! sys e com)
   (rvector-set! (*system-com-ref sys com) e (com-init com))
   (printf "Setting ~v for ~v\n" e com)
-  (gvector-update! (*system-es sys) e
-                   (λ (cms) (component-union (component-singleton sys com) cms))))
+  (define old-com-set (gvector-ref (*system-es sys) e))
+  (define new-com-set (component-union (component-singleton sys com) old-com-set))
+  (for ([(com-set es) (in-hash (*system-interests sys))]
+        #:when (com-subset? com-set new-com-set))
+    (set-add! es e))
+  (gvector-set! (*system-es sys) e new-com-set))
 ;; xxx entity-has-not!
 (define (component-singleton sys x)
   (arithmetic-shift 1 (*system-com-id sys x)))
@@ -156,10 +166,11 @@
   (bitwise-ior x y))
 (define (entity-mask sys e)
   (gvector-ref (*system-es sys) e))
+(define (com-subset? small big)
+  (define m (bitwise-and big small))
+  (= small m))
 (define (entity-has? sys e com-set)
-  (define em (entity-mask sys e))
-  (define m (bitwise-and com-set em))
-  (= com-set m))
+  (com-subset? com-set (entity-mask sys e)))
 (define (*entity-set! sys e com field val)
   (com-set! com (rvector-ref (*system-com-ref sys com) e)
             field val))
@@ -176,8 +187,8 @@
 ;; so they must be values that are produced by functions and thus they
 ;; need to abstract over the components
 ;;
-;; xxx processors should expose their query, what they (might) change,
-;; and how often they need to be run (always, on changes, etc)
+;; xxx processors should expose what they (might) change, and how
+;; often they need to be run (always, on changes, etc)
 ;;
 ;; xxx should be testable
 ;;
