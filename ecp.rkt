@@ -3,9 +3,15 @@
          racket/set
          racket/flonum)
 
+;; xxx i should remove these representation optimizations and abstract
+;; it so that different ones can be chosen and i can experiment more
+;; with the design.
+
 ;; Entity : Number
+
 ;; xxx if every component has a spot for every entity then we use lots
-;; of memory
+;; of memory... N entities and C components = N * C memory
+
 ;; xxx if each entity has a spot to say which offset into the
 ;; component it uses, then they each need their own free list
 
@@ -221,6 +227,16 @@
                            (entity-ref sys e Velocity dy))))))))
 
 ;; xxx make this predictive when there's a Pos & Velocity
+;;
+;; zzz can i consider my system so far as only having a "changed"
+;; event, but also provide an "added" and "removed" event, also i
+;; don't allow negated atoms in queries. similarly, i could have sets
+;; of shared processes, so the Colliding system would listen for
+;; changes to "Position X Collideable | ! InCollisionDB" then install
+;; a "InCollisionDB" component, then when there was a change to
+;; "Position X Collideable X InCollisionDB", it would update the
+;; location and when "Position" or "Collideable" was removed when
+;; "InCollisionDB" was present it would remove it all together.
 (define Colliding
   (λ (sys)
     (values
