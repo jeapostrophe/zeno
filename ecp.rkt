@@ -72,6 +72,7 @@
      hd]))
 (define (gvector-free! gv i)
   (rvector-set! (*gvector-rv gv) i (*gvector-hd gv))
+  ;; xxx this is O(N) but this should be a tree
   (set-*gvector-keys! gv (remq i (*gvector-keys gv)))
   (set-*gvector-hd! gv i))
 (define (gvector-set! gv i v)
@@ -108,7 +109,13 @@
   (for ([ps (in-list (*system-po sys))])
     ;; xxx can do each level of this tree in parallel
     (for ([p (in-list ps)])
-      (p sys))))
+      (system-process sys p))))
+(define (system-process sys p)
+  (define-values (com-set init) (p sys))
+  (define process-entity (init))
+  (for ([e (in-entities sys)]
+        #:when (entity-has? sys e com-set))
+    (process-entity e)))
 
 (define (entity-alloc! sys)
   (define es (*system-es sys))
@@ -166,64 +173,61 @@
 ;;
 ;; xxx the system should not use the component directly, but should
 ;; have its own notion of that particular component, which is bound
-;; inside here
+;; inside here (which would allow fast access to its information
+;; rather than the lookup inside)
 (define Moving
   (λ (sys)
-    (for ([e (in-entities sys)]
-          #:when (entity-has? sys e
-                              (component-union (component-singleton sys Position)
-                                               (component-singleton sys Velocity))))
-      (entity-set! sys e Position x
-                   (fl+ (entity-ref sys e Position x)
-                        (entity-ref sys e Velocity dx)))
-      (entity-set! sys e Position y
-                   (fl+ (entity-ref sys e Position y)
-                        (entity-ref sys e Velocity dy))))))
+    (values
+     (component-union (component-singleton sys Position)
+                      (component-singleton sys Velocity))
+     (λ ()
+       (λ (e)
+         (entity-set! sys e Position x
+                      (fl+ (entity-ref sys e Position x)
+                           (entity-ref sys e Velocity dx)))
+         (entity-set! sys e Position y
+                      (fl+ (entity-ref sys e Position y)
+                           (entity-ref sys e Velocity dy))))))))
 
 ;; xxx make this predictive when there's a Pos & Velocity
-;;
-;; xxx maybe i shouldn't have these 'pair' queries and instead have
-;; processors with state
 (define Colliding
   (λ (sys)
-    (for ([l (in-entities sys)]
-          #:when (entity-has? sys l
-                              (component-union
-                               (component-singleton sys Position)
-                               (component-singleton sys Collideable))))
-      (for ([r (in-entities sys)]
-            #:unless (eq? l r)
-            #:when (entity-has? sys r
-                                (component-union
-                                 (component-singleton sys Position)
-                                 (component-singleton sys Collideable))))
-        (when (and (= (entity-ref sys l Position x)
-                      (entity-ref sys r Position x)))
-          (entity-has! sys l Collided)
-          (entity-set! sys l Collided other-data
-                       (entity-ref sys r Collideable data))
-          (entity-has! sys r Collided)
-          (entity-set! sys r Collided other-data
-                       (entity-ref sys l Collideable data)))))))
+    (values
+     (component-union
+      (component-singleton sys Position)
+      (component-singleton sys Collideable))
+     (λ ()
+       (define rs null)
+       (λ (l)
+         (for ([r (in-list rs)])
+           (when (and (= (entity-ref sys l Position x)
+                         (entity-ref sys r Position x)))
+             (entity-has! sys l Collided)
+             (entity-set! sys l Collided other-data
+                          (entity-ref sys r Collideable data))
+             (entity-has! sys r Collided)
+             (entity-set! sys r Collided other-data
+                          (entity-ref sys l Collideable data))))
+         (set! rs (cons l rs)))))))
 
 (define Exploding
   (λ (sys)
-    (for ([e (in-entities sys)]
-          #:when (entity-has? sys e
-                              (component-union
-                               (component-singleton sys Position)
-                               (component-singleton sys Collided))))
-      (define explosion (entity-alloc! sys))
-      (entity-has! sys explosion Position)
-      (entity-set! sys explosion Position x (entity-ref sys e Position x))
-      (entity-set! sys explosion Position y (entity-ref sys e Position y))
-      (entity-delete! sys e))))
+    (values
+     (component-union
+      (component-singleton sys Position)
+      (component-singleton sys Collided))
+     (λ ()
+       (λ (e)
+         (define explosion (entity-alloc! sys))
+         (entity-has! sys explosion Position)
+         (entity-set! sys explosion Position x (entity-ref sys e Position x))
+         (entity-set! sys explosion Position y (entity-ref sys e Position y))
+         (entity-delete! sys e))))))
 
-(define Printing
-  (λ (sys)
-    (local-require racket/pretty)
-    (pretty-print (vector (*system-com->ht sys) (*system-es sys)))
-    (printf "\n")))
+(define (print-system sys)
+  (local-require racket/pretty)
+  (pretty-print (vector (*system-com->ht sys) (*system-es sys)))
+  (printf "\n"))
 
 (module+ test
   (define Game
@@ -233,8 +237,7 @@
      #:processor-order
      (list (list Moving)
            (list Colliding)
-           (list Exploding)
-           (list Printing))))
+           (list Exploding))))
 
   (define Hero (entity-alloc! Game))
   (entity-has! Game Hero Position)
@@ -256,4 +259,5 @@
   (entity-set! Game Roof Collideable data 'Ceiling)
 
   (for ([i (in-range 5)])
-    (system-iterate Game)))
+    (system-iterate Game)
+    (print-system Game)))
