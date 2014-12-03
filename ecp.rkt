@@ -84,19 +84,29 @@
 (define (gvector-keys gv)
   (*gvector-keys gv))
 
-(struct *system (es com->id com->ht po))
+(struct *system (es com->id com->ht interests pob) #:transparent)
 (define (system #:components coms
-                ;; xxx discover this from the dependency information
-                ;; and meta-data about what processors modify
                 #:processor-order po)
-  (*system (gvector)
-           (for/hasheq ([c (in-list coms)]
-                        [i (in-naturals)])
-             (values c i))
-           (for/vector ([c (in-list coms)]
-                        [i (in-naturals)])
-             (rvector 1))
-           po))
+  (define pob (box #f))
+  (define sys
+    (*system (gvector)
+             (for/hasheq ([c (in-list coms)]
+                          [i (in-naturals)])
+               (values c i))
+             (for/vector ([c (in-list coms)]
+                          [i (in-naturals)])
+               (rvector 1))
+             (make-hasheq)
+             pob))
+
+  (set-box! pob
+            (for/list ([ps (in-list po)])
+              (for/list ([p (in-list ps)])
+                (define-values (com-set init) (p sys))
+                (hash-set! (*system-interests sys) com-set #t)
+                (cons com-set init))))
+
+  sys)
 (define (*system-com-id sys com)
   (hash-ref (*system-com->id sys) com
             (λ ()
@@ -106,12 +116,12 @@
   (vector-ref (*system-com->ht sys) comi))
 
 (define (system-iterate sys)
-  (for ([ps (in-list (*system-po sys))])
+  (for ([ps (in-list (unbox (*system-pob sys)))])
     ;; xxx can do each level of this tree in parallel
-    (for ([p (in-list ps)])
-      (system-process sys p))))
-(define (system-process sys p)
-  (define-values (com-set init) (p sys))
+    (for ([cs*i (in-list ps)])
+      (system-process sys cs*i))))
+(define (system-process sys cs*i)
+  (match-define (cons com-set init) cs*i)
   (define process-entity (init))
   (for ([e (in-entities sys)]
         #:when (entity-has? sys e com-set))
@@ -226,7 +236,7 @@
 
 (define (print-system sys)
   (local-require racket/pretty)
-  (pretty-print (vector (*system-com->ht sys) (*system-es sys)))
+  (pretty-print sys)
   (printf "\n"))
 
 (module+ test
@@ -235,6 +245,8 @@
      #:components
      (list Position Velocity Collideable Collided)
      #:processor-order
+     ;; xxx discover this from the dependency information
+     ;; and meta-data about what processors modify
      (list (list Moving)
            (list Colliding)
            (list Exploding))))
