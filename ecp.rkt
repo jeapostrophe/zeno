@@ -70,9 +70,9 @@
            (for/hasheq ([c (in-list coms)]
                         [i (in-naturals)])
              (values c i))
-           (for/hasheq ([c (in-list coms)]
+           (for/vector ([c (in-list coms)]
                         [i (in-naturals)])
-             (values i (make-hasheq)))
+             (make-hasheq))
            po))
 (define (*system-com-id sys com)
   (hash-ref (*system-com->id sys) com
@@ -80,9 +80,7 @@
               (error '*system-com-id "No ~v" com))))
 (define (*system-com-ref sys com)
   (define comi (*system-com-id sys com))
-  (hash-ref (*system-com->ht sys) comi
-            (λ ()
-              (error '*system-com-ref "No ~v" comi))))
+  (vector-ref (*system-com->ht sys) comi))
 
 (define (system-iterate sys)
   (for ([ps (in-list (*system-po sys))])
