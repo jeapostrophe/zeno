@@ -10,12 +10,20 @@
 ;; component it uses, then they each need their own free list
 
 ;; Component : Entity -> Data
-(struct *component (fields) #:transparent)
+(struct *component (field->i) #:transparent)
+(define (make-*component fields)
+  (*component
+   (for/hasheq ([f (in-list fields)]
+                [i (in-naturals)])
+     (values f i))))
 (define-syntax-rule (component (id ...) format)
-  (*component '(id ...)))
-(define (com-init com) (make-hasheq))
-(define (com-ref com ht k) (hash-ref ht k))
-(define (com-set! com ht k v) (hash-set! ht k v))
+  (make-*component '(id ...)))
+(define (com-init com)
+  (make-vector (hash-count (*component-field->i com))))
+(define (com-ref com vec k)
+  (vector-ref vec (hash-ref (*component-field->i com) k)))
+(define (com-set! com vec k v)
+  (vector-set! vec (hash-ref (*component-field->i com) k) v))
 
 ;; xxx ideally these will be giant vectors, some being flvector, some
 ;; being fx, some being bytes or shared.
