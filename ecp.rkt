@@ -1,5 +1,6 @@
 #lang racket/base
 (require racket/match
+         racket/set
          racket/flonum)
 
 ;; Entity : Number
@@ -53,7 +54,7 @@
 
 (struct *gvector (hd keys rv) #:transparent #:mutable)
 (define (gvector)
-  (*gvector 0 null (rvector 1)))
+  (*gvector 0 (mutable-seteq) (rvector 1)))
 (define (gvector-alloc! gv expanded!)
   (match gv
     [(*gvector #f keys vec)
@@ -67,13 +68,12 @@
      (expanded! new-len)
      (gvector-alloc! gv void)]
     [(*gvector hd keys vec)
-     (set-*gvector-keys! gv (cons hd keys))
+     (set-add! keys hd)
      (set-*gvector-hd! gv (rvector-ref vec hd))
      hd]))
 (define (gvector-free! gv i)
   (rvector-set! (*gvector-rv gv) i (*gvector-hd gv))
-  ;; xxx this is O(N) but this should be a tree
-  (set-*gvector-keys! gv (remq i (*gvector-keys gv)))
+  (set-remove! (*gvector-keys gv) i)
   (set-*gvector-hd! gv i))
 (define (gvector-set! gv i v)
   (rvector-set! (*gvector-rv gv) i v))
@@ -82,7 +82,7 @@
 (define (gvector-update! gv i f)
   (gvector-set! gv i (f (gvector-ref gv i))))
 (define (gvector-keys gv)
-  (*gvector-keys gv))
+  (set->list (*gvector-keys gv)))
 
 (struct *system (es com->id com->ht interests pob) #:transparent)
 (define (system #:components coms
