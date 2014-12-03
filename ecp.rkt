@@ -10,7 +10,7 @@
 ;; component it uses, then they each need their own free list
 
 ;; Component : Entity -> Data
-(struct *component (fields))
+(struct *component (fields) #:transparent)
 (define-syntax-rule (component (id ...) format)
   (*component '(id ...)))
 
@@ -26,17 +26,28 @@
 (define Display (component (disp) #:racket))
 (define Render (component (x y disp) #:racket))
 
-(struct *system ([next #:mutable] es com->ht po))
+(struct *system ([next #:mutable] es com->id com->ht po))
 (define (system #:components coms
                 ;; xxx discover this from the dependency information
                 ;; and meta-data about what processors modify
                 #:processor-order po)
   (*system 0 (make-hasheq)
-           (for/hasheq ([c (in-list coms)])
-             (values c (make-hasheq)))
+           (for/hasheq ([c (in-list coms)]
+                        [i (in-naturals)])
+             (values c i))
+           (for/hasheq ([c (in-list coms)]
+                        [i (in-naturals)])
+             (values i (make-hasheq)))
            po))
+(define (*system-com-id sys com)
+  (hash-ref (*system-com->id sys) com
+            (λ ()
+              (error '*system-com-id "No ~v" com))))
 (define (*system-com-ref sys com)
-  (hash-ref (*system-com->ht sys) com))
+  (define comi (*system-com-id sys com))
+  (hash-ref (*system-com->ht sys) comi
+            (λ ()
+              (error '*system-com-ref "No ~v" comi))))
 
 (define (system-iterate sys)
   (for ([ps (in-list (*system-po sys))])
@@ -47,7 +58,7 @@
 (define (entity-alloc! sys)
   (define es (*system-es sys))
   (define e (*system-next sys))
-  (hash-set! es e null)
+  (hash-set! es e 0)
   (set-*system-next! sys (+ 1 e))
   e)
 (define (entity-delete! sys e)
@@ -60,25 +71,35 @@
   (in-list (hash-keys (*system-es sys))))
 (define (entity-has! sys e com)
   (hash-set! (*system-com-ref sys com) e (make-hasheq))
-  (hash-update! (*system-es sys) e (λ (x) (cons com x))))
-(define (component-and x y)
-  (cons x y))
-(define (entity-has? sys e com)
-  (match com
-    [(cons x y)
-     (and (entity-has? sys e x)
-          (entity-has? sys e y))]
-    [_
-     (member com (hash-ref (*system-es sys) e))]))
+  (printf "Setting ~v for ~v\n" e com)
+  (hash-update! (*system-es sys) e
+                (λ (cms) (component-union (component-singleton sys com) cms))))
+;; xxx entity-has-not!
+(define (component-singleton sys x)
+  (arithmetic-shift 1 (*system-com-id sys x)))
+(define (component-union x y)
+  (bitwise-ior x y))
+(define (entity-mask sys e)
+  (hash-ref (*system-es sys) e
+            (λ ()
+              (error 'entity-has? "No ~v" e))))
+(define (entity-has? sys e com-set)
+  (define em (entity-mask sys e))
+  (define m (bitwise-and com-set em))
+  (= com-set m))
 (define (*entity-set! sys e com field val)
   (hash-set! (hash-ref (*system-com-ref sys com)
-                       e)
+                       e
+                       (λ ()
+                         (error '*entity-set! "No ~v for ~v" e com)))
              field val))
 (define-syntax-rule (entity-set! sys e com field val)
   (*entity-set! sys e com 'field val))
 (define (*entity-ref sys e com field)
   (hash-ref (hash-ref (*system-com-ref sys com)
-                      e)
+                      e
+                      (λ ()
+                        (error '*entity-set! "No ~v for ~v" e com)))
             field))
 (define-syntax-rule (entity-ref sys e com field)
   (*entity-ref sys e com 'field))
@@ -99,7 +120,9 @@
 (define Moving
   (λ (sys)
     (for ([e (in-entities sys)]
-          #:when (entity-has? sys e (component-and Position Velocity)))
+          #:when (entity-has? sys e
+                              (component-union (component-singleton sys Position)
+                                               (component-singleton sys Velocity))))
       (entity-set! sys e Position x
                    (fl+ (entity-ref sys e Position x)
                         (entity-ref sys e Velocity dx)))
@@ -114,10 +137,16 @@
 (define Colliding
   (λ (sys)
     (for ([l (in-entities sys)]
-          #:when (entity-has? sys l (component-and Position Collideable)))
+          #:when (entity-has? sys l
+                              (component-union
+                               (component-singleton sys Position)
+                               (component-singleton sys Collideable))))
       (for ([r (in-entities sys)]
             #:unless (eq? l r)
-            #:when (entity-has? sys r (component-and Position Collideable)))
+            #:when (entity-has? sys r
+                                (component-union
+                                 (component-singleton sys Position)
+                                 (component-singleton sys Collideable))))
         (when (and (= (entity-ref sys l Position x)
                       (entity-ref sys r Position x)))
           (entity-has! sys l Collided)
@@ -130,7 +159,10 @@
 (define Exploding
   (λ (sys)
     (for ([e (in-entities sys)]
-          #:when (entity-has? sys e (component-and Position Collided)))
+          #:when (entity-has? sys e
+                              (component-union
+                               (component-singleton sys Position)
+                               (component-singleton sys Collided))))
       (define explosion (entity-alloc! sys))
       (entity-has! sys explosion Position)
       (entity-set! sys explosion Position x (entity-ref sys e Position x))
