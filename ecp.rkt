@@ -43,7 +43,7 @@
 (struct *gvector (hd keys rv) #:transparent #:mutable)
 (define (gvector)
   (*gvector 0 null (rvector 1)))
-(define (gvector-alloc! gv)
+(define (gvector-alloc! gv expanded!)
   (match gv
     [(*gvector #f keys vec)
      (define old-len (rvector-size vec))
@@ -53,7 +53,8 @@
        (rvector-set! vec i (+ i 1)))
      (rvector-set! vec (- new-len 1) #f)
      (set-*gvector-hd! gv old-len)
-     (gvector-alloc! gv)]
+     (expanded! new-len)
+     (gvector-alloc! gv void)]
     [(*gvector hd keys vec)
      (set-*gvector-keys! gv (cons hd keys))
      (set-*gvector-hd! gv (rvector-ref vec hd))
@@ -82,7 +83,7 @@
              (values c i))
            (for/vector ([c (in-list coms)]
                         [i (in-naturals)])
-             (make-hasheq))
+             (rvector 1))
            po))
 (define (*system-com-id sys com)
   (hash-ref (*system-com->id sys) com
@@ -100,7 +101,11 @@
 
 (define (entity-alloc! sys)
   (define es (*system-es sys))
-  (define e (gvector-alloc! es))
+  (define e 
+    (gvector-alloc! es
+                    (λ (new-size)
+                      (for ([ht (in-vector (*system-com->ht sys))])
+                        (rvector-resize! ht new-size)))))
   (gvector-set! es e 0)
   e)
 (define (entity-delete! sys e)
@@ -112,7 +117,7 @@
   ;; entities in the middle of systems.
   (in-list (gvector-keys (*system-es sys))))
 (define (entity-has! sys e com)
-  (hash-set! (*system-com-ref sys com) e (make-hasheq))
+  (rvector-set! (*system-com-ref sys com) e (make-hasheq))
   (printf "Setting ~v for ~v\n" e com)
   (gvector-update! (*system-es sys) e
                    (λ (cms) (component-union (component-singleton sys com) cms))))
@@ -128,18 +133,12 @@
   (define m (bitwise-and com-set em))
   (= com-set m))
 (define (*entity-set! sys e com field val)
-  (hash-set! (hash-ref (*system-com-ref sys com)
-                       e
-                       (λ ()
-                         (error '*entity-set! "No ~v for ~v" e com)))
+  (hash-set! (rvector-ref (*system-com-ref sys com) e)
              field val))
 (define-syntax-rule (entity-set! sys e com field val)
   (*entity-set! sys e com 'field val))
 (define (*entity-ref sys e com field)
-  (hash-ref (hash-ref (*system-com-ref sys com)
-                      e
-                      (λ ()
-                        (error '*entity-set! "No ~v for ~v" e com)))
+  (hash-ref (rvector-ref (*system-com-ref sys com) e)
             field))
 (define-syntax-rule (entity-ref sys e com field)
   (*entity-ref sys e com 'field))
