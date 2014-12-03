@@ -26,12 +26,47 @@
 (define Display (component (disp) #:racket))
 (define Render (component (x y disp) #:racket))
 
-(struct *system ([next #:mutable] es com->id com->ht po))
+(struct *gvector (hd keys vec) #:transparent #:mutable)
+(define (gvector)
+  (*gvector 0 null (vector #f)))
+(define (gvector-alloc! gv)
+  (match gv
+    [(*gvector #f keys vec)
+     (define old-len (vector-length vec))
+     (define new-len (* 2 old-len))
+     (define new (make-vector new-len #f))
+     (for ([e (in-vector vec)]
+           [i (in-naturals)])
+       (vector-set! new i e))
+     (for ([i (in-range old-len new-len)])
+       (vector-set! new i (+ i 1)))
+     (vector-set! new (- new-len 1) #f)
+     (set-*gvector-hd! gv old-len)
+     (set-*gvector-vec! gv new)
+     (gvector-alloc! gv)]
+    [(*gvector hd keys vec)
+     (set-*gvector-keys! gv (cons hd keys))
+     (set-*gvector-hd! gv (vector-ref vec hd))
+     hd]))
+(define (gvector-free! gv i)
+  (vector-set! (*gvector-vec gv) i (*gvector-hd gv))
+  (set-*gvector-keys! gv (remq i (*gvector-keys gv)))
+  (set-*gvector-hd! gv i))
+(define (gvector-set! gv i v)
+  (vector-set! (*gvector-vec gv) i v))
+(define (gvector-ref gv i)
+  (vector-ref (*gvector-vec gv) i))
+(define (gvector-update! gv i f)
+  (gvector-set! gv i (f (gvector-ref gv i))))
+(define (gvector-keys gv)
+  (*gvector-keys gv))
+
+(struct *system (es com->id com->ht po))
 (define (system #:components coms
                 ;; xxx discover this from the dependency information
                 ;; and meta-data about what processors modify
                 #:processor-order po)
-  (*system 0 (make-hasheq)
+  (*system (gvector)
            (for/hasheq ([c (in-list coms)]
                         [i (in-naturals)])
              (values c i))
@@ -57,32 +92,29 @@
 
 (define (entity-alloc! sys)
   (define es (*system-es sys))
-  (define e (*system-next sys))
-  (hash-set! es e 0)
-  (set-*system-next! sys (+ 1 e))
+  (define e (gvector-alloc! es))
+  (gvector-set! es e 0)
   e)
 (define (entity-delete! sys e)
   (define es (*system-es sys))
-  (hash-remove! es e))
+  (gvector-free! es e))
 
 (define (in-entities sys)
   ;; xxx it is necessary to get them all first because we might remove
   ;; entities in the middle of systems.
-  (in-list (hash-keys (*system-es sys))))
+  (in-list (gvector-keys (*system-es sys))))
 (define (entity-has! sys e com)
   (hash-set! (*system-com-ref sys com) e (make-hasheq))
   (printf "Setting ~v for ~v\n" e com)
-  (hash-update! (*system-es sys) e
-                (λ (cms) (component-union (component-singleton sys com) cms))))
+  (gvector-update! (*system-es sys) e
+                   (λ (cms) (component-union (component-singleton sys com) cms))))
 ;; xxx entity-has-not!
 (define (component-singleton sys x)
   (arithmetic-shift 1 (*system-com-id sys x)))
 (define (component-union x y)
   (bitwise-ior x y))
 (define (entity-mask sys e)
-  (hash-ref (*system-es sys) e
-            (λ ()
-              (error 'entity-has? "No ~v" e))))
+  (gvector-ref (*system-es sys) e))
 (define (entity-has? sys e com-set)
   (define em (entity-mask sys e))
   (define m (bitwise-and com-set em))
