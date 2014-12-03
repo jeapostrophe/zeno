@@ -13,6 +13,9 @@
 (struct *component (fields) #:transparent)
 (define-syntax-rule (component (id ...) format)
   (*component '(id ...)))
+(define (com-init com) (make-hasheq))
+(define (com-ref com ht k) (hash-ref ht k))
+(define (com-set! com ht k v) (hash-set! ht k v))
 
 ;; xxx ideally these will be giant vectors, some being flvector, some
 ;; being fx, some being bytes or shared.
@@ -101,7 +104,7 @@
 
 (define (entity-alloc! sys)
   (define es (*system-es sys))
-  (define e 
+  (define e
     (gvector-alloc! es
                     (λ (new-size)
                       (for ([ht (in-vector (*system-com->ht sys))])
@@ -117,7 +120,7 @@
   ;; entities in the middle of systems.
   (in-list (gvector-keys (*system-es sys))))
 (define (entity-has! sys e com)
-  (rvector-set! (*system-com-ref sys com) e (make-hasheq))
+  (rvector-set! (*system-com-ref sys com) e (com-init com))
   (printf "Setting ~v for ~v\n" e com)
   (gvector-update! (*system-es sys) e
                    (λ (cms) (component-union (component-singleton sys com) cms))))
@@ -133,13 +136,13 @@
   (define m (bitwise-and com-set em))
   (= com-set m))
 (define (*entity-set! sys e com field val)
-  (hash-set! (rvector-ref (*system-com-ref sys com) e)
-             field val))
+  (com-set! com (rvector-ref (*system-com-ref sys com) e)
+            field val))
 (define-syntax-rule (entity-set! sys e com field val)
   (*entity-set! sys e com 'field val))
 (define (*entity-ref sys e com field)
-  (hash-ref (rvector-ref (*system-com-ref sys com) e)
-            field))
+  (com-ref com (rvector-ref (*system-com-ref sys com) e)
+           field))
 (define-syntax-rule (entity-ref sys e com field)
   (*entity-ref sys e com 'field))
 
