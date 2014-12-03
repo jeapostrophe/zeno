@@ -4,7 +4,6 @@
          racket/flonum)
 
 ;; Entity : Number
-;; xxx perhaps with a mask of what components are enabled
 ;; xxx if every component has a spot for every entity then we use lots
 ;; of memory
 ;; xxx if each entity has a spot to say which offset into the
@@ -138,9 +137,8 @@
   e)
 (define (entity-delete! sys e)
   (define es (*system-es sys))
-  ;; xxx part of has-not!
-  (for ([(com-set es) (in-hash (*system-interests sys))])
-    (set-remove! es e))
+  (for ([com (in-hash-keys (*system-com->id sys))])
+    (entity-has-not! sys e com))
   (gvector-free! es e))
 
 (define (matching-entitites sys com-set)
@@ -154,14 +152,25 @@
   (rvector-set! (*system-com-ref sys com) e (com-init com))
   (printf "Setting ~v for ~v\n" e com)
   (define old-com-set (gvector-ref (*system-es sys) e))
-  (define new-com-set (component-union (component-singleton sys com) old-com-set))
+  (define new-com-set (component-union old-com-set (component-singleton sys com)))
   (for ([(com-set es) (in-hash (*system-interests sys))]
         #:when (com-subset? com-set new-com-set))
     (set-add! es e))
   (gvector-set! (*system-es sys) e new-com-set))
-;; xxx entity-has-not!
+(define (entity-has-not! sys e com)
+  (rvector-set! (*system-com-ref sys com) e #f)
+  (define old-com-set (gvector-ref (*system-es sys) e))
+  (define rm-com (component-singleton sys com))
+  (define new-com-set (component-subtract old-com-set rm-com))
+  (for ([(com-set es) (in-hash (*system-interests sys))]
+        #:when (com-subset? rm-com com-set))
+    (set-remove! es e))
+  (gvector-set! (*system-es sys) e new-com-set))
+
 (define (component-singleton sys x)
   (arithmetic-shift 1 (*system-com-id sys x)))
+(define (component-subtract cms x)
+  (bitwise-and cms (bitwise-not x)))
 (define (component-union x y)
   (bitwise-ior x y))
 (define (entity-mask sys e)
@@ -169,6 +178,7 @@
 (define (com-subset? small big)
   (define m (bitwise-and big small))
   (= small m))
+
 (define (entity-has? sys e com-set)
   (com-subset? com-set (entity-mask sys e)))
 (define (*entity-set! sys e com field val)
@@ -218,6 +228,8 @@
       (component-singleton sys Position)
       (component-singleton sys Collideable))
      (λ ()
+       ;; xxx should keep just one of these and do something to remove
+       ;; them
        (define rs null)
        (λ (l)
          (for ([r (in-list rs)])
