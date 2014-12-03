@@ -26,18 +26,17 @@
 (define Display (component (disp) #:racket))
 (define Render (component (x y disp) #:racket))
 
-(struct *system ([next #:mutable] es com->id po))
+(struct *system ([next #:mutable] es com->ht po))
 (define (system #:components coms
                 ;; xxx discover this from the dependency information
                 ;; and meta-data about what processors modify
                 #:processor-order po)
   (*system 0 (make-hasheq)
-           (for/hasheq ([c (in-list coms)]
-                        [i (in-naturals)])
-             (values c i))
+           (for/hasheq ([c (in-list coms)])
+             (values c (make-hasheq)))
            po))
 (define (*system-com-ref sys com)
-  (hash-ref (*system-com->id sys) com))
+  (hash-ref (*system-com->ht sys) com))
 
 (define (system-iterate sys)
   (for ([ps (in-list (*system-po sys))])
@@ -48,7 +47,7 @@
 (define (entity-alloc! sys)
   (define es (*system-es sys))
   (define e (*system-next sys))
-  (hash-set! es e (make-hasheq))
+  (hash-set! es e null)
   (set-*system-next! sys (+ 1 e))
   e)
 (define (entity-delete! sys e)
@@ -60,7 +59,8 @@
   ;; entities in the middle of systems.
   (in-list (hash-keys (*system-es sys))))
 (define (entity-has! sys e com)
-  (hash-set! (hash-ref (*system-es sys) e) (*system-com-ref sys com) (make-hasheq)))
+  (hash-set! (*system-com-ref sys com) e (make-hasheq))
+  (hash-update! (*system-es sys) e (λ (x) (cons com x))))
 (define (component-and x y)
   (cons x y))
 (define (entity-has? sys e com)
@@ -69,17 +69,16 @@
      (and (entity-has? sys e x)
           (entity-has? sys e y))]
     [_
-     (hash-has-key? (hash-ref (*system-es sys) e) 
-                    (*system-com-ref sys com))]))
+     (member com (hash-ref (*system-es sys) e))]))
 (define (*entity-set! sys e com field val)
-  (hash-set! (hash-ref (hash-ref (*system-es sys) e) 
-                       (*system-com-ref sys com))
+  (hash-set! (hash-ref (*system-com-ref sys com)
+                       e)
              field val))
 (define-syntax-rule (entity-set! sys e com field val)
   (*entity-set! sys e com 'field val))
 (define (*entity-ref sys e com field)
-  (hash-ref (hash-ref (hash-ref (*system-es sys) e) 
-                      (*system-com-ref sys com))
+  (hash-ref (hash-ref (*system-com-ref sys com)
+                      e)
             field))
 (define-syntax-rule (entity-ref sys e com field)
   (*entity-ref sys e com 'field))
@@ -141,7 +140,7 @@
 (define Printing
   (λ (sys)
     (local-require racket/pretty)
-    (pretty-print (*system-es sys))
+    (pretty-print (vector (*system-com->ht sys) (*system-es sys)))
     (printf "\n")))
 
 (module+ test
