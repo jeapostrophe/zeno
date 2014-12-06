@@ -576,9 +576,9 @@
              (fl/ Width.0 2.0) WallThickness
              'vertical)
 
-      (for ([i (in-range 50)])
+      (for ([i (in-range 100)])
         (define b (new! 'ball))
-        (define hw (fl/ WallThickness 8.0))
+        (define hw (fl/ WallThickness 4.0))
         (define hh hw)
         (define dir
           (make-polar (fl/ WallThickness 4.0)
