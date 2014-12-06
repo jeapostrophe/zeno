@@ -254,6 +254,7 @@
     (entities-component-changed? es e com)))
 
 (struct component-binding (com ref has? set! remove!))
+;; xxx memoize this so there's only one for each
 (define (bind-component sys com)
   (define es (*system-es sys))
   (define qc (*system-qc sys))
@@ -301,6 +302,11 @@
            racket/fixnum
            racket/flonum)
 
+  (define (flsgn x)
+    (if (fl< x 0.0)
+        -1.0
+        1.0))
+
   (define Position
     (component (cx cy) #:flonum))
   (define Velocity
@@ -339,13 +345,129 @@
     (vec2 (fl* s (vec2-x v))
           (fl* s (vec2-y v))))
 
+  (define (compute-sep-vec e cx cy hw hh
+                           ep cxp cyp hwp hhp)
+    (define x-axis (flabs (fl- cx cxp)))
+    (define cw (fl+ hw hwp))
+    (define y-axis (flabs (fl- cy cyp)))
+    (define ch (fl+ hh hhp))
+    (cond
+     [(or (fl> x-axis cw)
+          (fl> y-axis ch))
+      (eprintf "~v doesn't collide with ~v: dump ~v\n"
+               e ep
+               `([cx ,cx cy ,cy]
+                 [hw ,hw hh ,hh]
+                 [cxp ,cxp cyp ,cyp]
+                 [hwp ,hwp hhp ,hhp]
+                 [x-axis ,x-axis]
+                 [cw ,cw]
+                 [y-axis ,y-axis]
+                 [ch ,ch]))
+      (values #f #f)]
+     [else
+      (define ox (flabs (fl- x-axis cw)))
+      (define oy (flabs (fl- y-axis ch)))
+      (define diff
+        (vec2- (vec2 cx cy)
+               (vec2 cxp cyp)))
+      (define dir
+        (vec2-normalize diff))
+      (define-values (e-ep ep-e)
+        (cond
+         [(fl> ox oy)
+          (define dy (fl* (flsgn (vec2-y dir)) oy))
+          (values (vec2 0.0 dy)
+                  (vec2 0.0 (fl* -1.0 dy)))]
+         [(fl> oy ox)
+          (define dx (fl* (flsgn (vec2-x dir)) ox))
+          (values (vec2 dx 0.0)
+                  (vec2 (fl* -1.0 dx) 0.0))]
+         [else
+          (define dx (fl* (flsgn (vec2-x dir)) ox))
+          (define dy (fl* (flsgn (vec2-y dir)) oy))
+          (values (vec2 dx dy)
+                  (vec2 (fl* -1.0 dx) (fl* -1.0 dy)))]))
+      (eprintf "~v collides with ~v: dump ~v\n"
+               e ep
+               `([cx ,cx cy ,cy]
+                 [hw ,hw hh ,hh]
+                 [cxp ,cxp cyp ,cyp]
+                 [hwp ,hwp hhp ,hhp]
+                 [x-axis ,x-axis]
+                 [cw ,cw]
+                 [y-axis ,y-axis]
+                 [ch ,ch]
+                 [ox ,ox]
+                 [oy ,oy]
+                 [diff ,diff]
+                 [dir ,dir]
+                 [e-ep ,e-ep]
+                 [ep-e ,ep-e]))
+      (values e-ep ep-e)]))
+
+  (define (check-compute-sep-vec
+           e cx1 cy1 hw hh
+           ep cxp1 cyp1 hwp hhp)
+    (define-values (e-ep1 ep-e1)
+      (compute-sep-vec
+       e cx1 cy1 hw hh
+       ep cxp1 cyp1 hwp hhp))
+    (cond
+     [(and e-ep1 ep-e1)
+      (define cx2 (fl+ cx1 (vec2-x e-ep1)))
+      (define cy2 (fl+ cy1 (vec2-y e-ep1)))
+      (define cxp2 (fl+ cxp1 (vec2-x ep-e1)))
+      (define cyp2 (fl+ cyp1 (vec2-y ep-e1)))
+      (define-values (e-ep2 ep-e2)
+        (compute-sep-vec
+         e cx2 cy2 hw hh
+         ep cxp2 cyp2 hwp hhp))
+      (unless (and (not e-ep2)
+                   (not ep-e2))
+        (error 'check-compute-sep-vec
+               "round 1 ~v\nresults ~v\nround 2 ~v\nresults ~v"
+               (vector e cx1 cy1 hw hh
+                       ep cxp1 cyp1 hwp hhp)
+               (vector e-ep1 ep-e1)
+               (vector e cx2 cy2 hw hh
+                       ep cxp2 cyp2 hwp hhp)
+               (vector e-ep2 ep-e2)))]
+     [else
+      (error 'check-compute-sep-vec
+             "expected collision but didn't find one\nround 1 ~v"
+             (vector e cx1 cy1 hw hh
+                     ep cxp1 cyp1 hwp hhp))]))
+
+  (check-compute-sep-vec
+   'ball-against-bottom1 23.312867092421016 600.3077754858892 3.75 3.75
+   'bottom-wall 400.0 630.0 400.0 30.0)
+  (check-compute-sep-vec
+   'ball-against-right 802.8663208393258 408.56311016268256 3.75 3.75
+   'right-wall 830.0 300.0 30.0 300.0)
+  (check-compute-sep-vec
+   'ball-against-left -1.909902576697318 539.9099025766973 3.75 3.75
+   'left-wall -30.0 300.0 30.0 300.0)
+  (check-compute-sep-vec
+   'ball-against-bottom2 113.22363916083972 602.5293319383622 3.75 3.75
+   'bottom-wall 400.0 630.0 400.0 30.0)
+  (check-compute-sep-vec
+   'bottom-wall 400.0 630.0 400.0 30.0
+   'ball-against-bottom3 113.22363916083972 602.5293319383622 3.75 3.75)
+  (check-compute-sep-vec
+   'ball-against-left2 -0.20880579214336592 303.4569465849744 3.75 3.75
+   'left-wall -30.0 300.0 400.0 30.0)
+  (check-compute-sep-vec
+   'ball56 146.45590745581785 600.1578031798822 3.75 3.75
+   'bottom-wall 400.0 630.0 400.0 30.0)
+
   (define (Collision)
     ;; xxx change to multi-dim -> set
     (define db (make-hash))
     (define resolution 5)
     (define (range cx hw)
       (values (fxquotient (fl->fx (flfloor (fl- cx hw))) resolution)
-              (fxquotient (fl->fx (flceiling (fl+ cx hw))) resolution)))
+              (fx+ 1 (fxquotient (fl->fx (flceiling (fl+ cx hw))) resolution))))
     (define (overlaps? cx hw cxp hwp)
       (fl<= (flabs (fl- cx cxp))
             (fl+ hw hwp)))
@@ -373,57 +495,17 @@
       (define-values (my My) (range cy hh))
       (idb! e mx Mx my My)
 
-      (define-values (d) (c e))
       (define collisions (mutable-set))
       (define (compute-collision! ep)
         (unless (set-member? collisions ep)
           (define-values (cxp cyp) (p ep))
           (define-values (hwp hhp) (s ep))
-          (define x-axis (flabs (fl- cx cxp)))
-          (define cw (fl+ hw hwp))
-          (define y-axis (flabs (fl- cy cyp)))
-          (define ch (fl+ hh hhp))
-          (unless (or (fl> x-axis cw)
-                      (fl> y-axis ch))
+          (define-values (e-ep ep-e)
+            (compute-sep-vec
+             e cx cy hw hh
+             ep cxp cyp hwp hhp))
+          (when e-ep
             (set-add! collisions ep)
-            (define ox (flabs (fl- x-axis cw)))
-            (define oy (flabs (fl- y-axis ch)))
-            (define diff
-              (vec2- (vec2 cx cy)
-                      (vec2 cxp cyp)))
-            (define dir
-              (vec2-normalize diff))
-            (define-values (e-ep ep-e)
-              (cond
-               [(fl> ox oy)
-                (define dy (fl* (vec2-y dir) oy))
-                (values (vec2 0.0 dy)
-                        (vec2 0.0 (fl* -1.0 dy)))]
-               [(fl> oy ox)
-                (define dx (fl* (vec2-x dir) ox))
-                (values (vec2 dx 0.0)
-                        (vec2 (fl* -1.0 dx) 0.0))]
-               [else
-                (define dx (fl* (vec2-x dir) ox))
-                (define dy (fl* (vec2-y dir) oy))
-                (values (vec2 dx dy)
-                        (vec2 (fl* -1.0 dx) (fl* -1.0 dy)))]))
-            (eprintf "~v collides with ~v: dump ~v\n"
-                     e ep
-                     `([cx ,cx cy ,cy]
-                       [hw ,hw hh ,hh]
-                       [cxp ,cxp cyp ,cyp]
-                       [hwp ,hwp hhp ,hhp]
-                       [x-axis ,x-axis]
-                       [cw ,cw]
-                       [y-axis ,y-axis]
-                       [ch ,ch]
-                       [ox ,ox]
-                       [oy ,oy]
-                       [diff ,diff]
-                       [dir ,dir]
-                       [e-ep ,e-ep]
-                       [ep-e ,ep-e]))
             (i! e 'left ep e-ep)
             (i! ep 'right e ep-e))))
       (define (compute-collisions! l)
@@ -443,6 +525,10 @@
      [(define-values (x y) (p e))
       (define-values (dx dy) (v e))
       (define-values (who-am-i other-guy sep-vec) (i e))
+      (eprintf "~v involved in collision with ~v on ~v; x,y is ~v,~v; sep is ~v\n"
+               e who-am-i other-guy
+               x y
+               sep-vec)
       (p! e
           (fl+ x (vec2-x sep-vec))
           (fl+ y (vec2-y sep-vec)))
