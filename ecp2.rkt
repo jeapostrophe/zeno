@@ -21,7 +21,6 @@
      (gvector))
    (λ (com-data e)
      (define e-ref (gvector-alloc! com-data))
-     (eprintf "alloc ~v ~v to ~v\n" id e e-ref)
      e-ref)
    (λ (com-data e-ref)
      (gvector-free! com-data e-ref))
@@ -30,7 +29,6 @@
      (vector->values
       (gvector-ref com-data e-ref)))
    (λ (com-data e-ref . vals)
-     (eprintf "set! ~v ~v ~v\n" id e-ref vals)
      (gvector-set! com-data e-ref (list->vector vals)))))
 (define-syntax (component stx)
   (syntax-parse stx
@@ -354,16 +352,6 @@
     (cond
      [(or (fl> x-axis cw)
           (fl> y-axis ch))
-      (eprintf "~v doesn't collide with ~v: dump ~v\n"
-               e ep
-               `([cx ,cx cy ,cy]
-                 [hw ,hw hh ,hh]
-                 [cxp ,cxp cyp ,cyp]
-                 [hwp ,hwp hhp ,hhp]
-                 [x-axis ,x-axis]
-                 [cw ,cw]
-                 [y-axis ,y-axis]
-                 [ch ,ch]))
       (values #f #f)]
      [else
       (define ox (flabs (fl- x-axis cw)))
@@ -388,22 +376,6 @@
           (define dy (fl* (flsgn (vec2-y dir)) oy))
           (values (vec2 dx dy)
                   (vec2 (fl* -1.0 dx) (fl* -1.0 dy)))]))
-      (eprintf "~v collides with ~v: dump ~v\n"
-               e ep
-               `([cx ,cx cy ,cy]
-                 [hw ,hw hh ,hh]
-                 [cxp ,cxp cyp ,cyp]
-                 [hwp ,hwp hhp ,hhp]
-                 [x-axis ,x-axis]
-                 [cw ,cw]
-                 [y-axis ,y-axis]
-                 [ch ,ch]
-                 [ox ,ox]
-                 [oy ,oy]
-                 [diff ,diff]
-                 [dir ,dir]
-                 [e-ep ,e-ep]
-                 [ep-e ,ep-e]))
       (values e-ep ep-e)]))
 
   (define (check-compute-sep-vec
@@ -525,10 +497,6 @@
      [(define-values (x y) (p e))
       (define-values (dx dy) (v e))
       (define-values (who-am-i other-guy sep-vec) (i e))
-      (eprintf "~v involved in collision with ~v on ~v; x,y is ~v,~v; sep is ~v\n"
-               e who-am-i other-guy
-               x y
-               sep-vec)
       (p! e
           (fl+ x (vec2-x sep-vec))
           (fl+ y (vec2-y sep-vec)))
@@ -579,7 +547,8 @@
      (list (list Moving)
            (list (Drawing vs) (Collision))
            (list Bouncing)
-           (list Testing))))
+           ;;(list Testing)
+           empty)))
 
   (define Width 800)
   (define Width.0 (fx->fl Width))
