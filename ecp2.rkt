@@ -20,7 +20,9 @@
    (λ ()
      (gvector))
    (λ (com-data e)
-     (gvector-alloc! com-data))
+     (define e-ref (gvector-alloc! com-data))
+     (eprintf "alloc ~v ~v to ~v\n" id e e-ref)
+     e-ref)
    (λ (com-data e-ref)
      (gvector-free! com-data e-ref))
    ;; xxx don't use lists but specialize to number of arguments
@@ -28,6 +30,7 @@
      (vector->values
       (gvector-ref com-data e-ref)))
    (λ (com-data e-ref . vals)
+     (eprintf "set! ~v ~v ~v\n" id e-ref vals)
      (gvector-set! com-data e-ref (list->vector vals)))))
 (define-syntax (component stx)
   (syntax-parse stx
@@ -150,8 +153,8 @@
 ;; xxx change to gvector
 (define (make-entities)
   (make-hasheq))
-(define (entities-new! es)
-  (define e (gensym 'entity))
+(define (entities-new! es [name 'entity])
+  (define e (gensym name))
   (hash-set! es e (make-hasheq))
   e)
 (define (entities-ref es e)
@@ -173,10 +176,11 @@
   (hash-ref e-ht com #f))
 (define (entities-component-ref es e com)
   (match (entities-component-*ref es e com)
-    [#f 
+    [#f
      #f]
     [(vector changed?-box com-ref)
      com-ref]))
+;; xxx change to com->set mapping
 ;; xxx this is inefficient
 (define (entities-reset-changed! es)
   (for* ([e-data (in-hash-values es)]
@@ -241,8 +245,8 @@
   sys)
 (define (bind-new! sys)
   (define es (*system-es sys))
-  (λ ()
-    (entities-new! es)))
+  (λ ([name 'entity])
+    (entities-new! es name)))
 (define (bind-changed? sys)
   (define es (*system-es sys))
   (λ (e com-b)
@@ -308,7 +312,7 @@
   (define InCollisionDB
     (component (mx Mx my My) #:fixnum))
   (define Collided
-    (component (other-data) #:racket))
+    (component (who-am-i other-guy sep-vec) #:racket))
 
   (define Moving
     (processor
@@ -318,7 +322,25 @@
       (define-values (dx dy) (v e))
       (p! e (fl+ cx dx) (fl+ cy dy))]))
 
+  (define (vec2 x y) (cons x y))
+  (define (vec2-x v2) (car v2))
+  (define (vec2-y v2) (cdr v2))
+  (define (vec2-len v2)
+    (flsqrt (fl+ (flexpt (vec2-x v2) 2.0)
+                 (flexpt (vec2-y v2) 2.0))))
+  (define (vec2-normalize v2)
+    (define v2-len (vec2-len v2))
+    (vec2 (fl/ (vec2-x v2) v2-len)
+          (fl/ (vec2-y v2) v2-len)))
+  (define (vec2- u v)
+    (vec2 (fl- (vec2-x u) (vec2-x v))
+          (fl- (vec2-y u) (vec2-y v))))
+  (define (vec2* s v)
+    (vec2 (fl* s (vec2-x v))
+          (fl* s (vec2-y v))))
+
   (define (Collision)
+    ;; xxx change to multi-dim -> set
     (define db (make-hash))
     (define resolution 5)
     (define (range cx hw)
@@ -357,10 +379,53 @@
         (unless (set-member? collisions ep)
           (define-values (cxp cyp) (p ep))
           (define-values (hwp hhp) (s ep))
-          ;; xxx compute separating vector
-          (when (and (overlaps? cx hw cxp hwp)
-                     (overlaps? cy hh cyp hhp))
-            (set-add! collisions ep))))
+          (define x-axis (flabs (fl- cx cxp)))
+          (define cw (fl+ hw hwp))
+          (define y-axis (flabs (fl- cy cyp)))
+          (define ch (fl+ hh hhp))
+          (unless (or (fl> x-axis cw)
+                      (fl> y-axis ch))
+            (set-add! collisions ep)
+            (define ox (flabs (fl- x-axis cw)))
+            (define oy (flabs (fl- y-axis ch)))
+            (define diff
+              (vec2- (vec2 cx cy)
+                      (vec2 cxp cyp)))
+            (define dir
+              (vec2-normalize diff))
+            (define-values (e-ep ep-e)
+              (cond
+               [(fl> ox oy)
+                (define dy (fl* (vec2-y dir) oy))
+                (values (vec2 0.0 dy)
+                        (vec2 0.0 (fl* -1.0 dy)))]
+               [(fl> oy ox)
+                (define dx (fl* (vec2-x dir) ox))
+                (values (vec2 dx 0.0)
+                        (vec2 (fl* -1.0 dx) 0.0))]
+               [else
+                (define dx (fl* (vec2-x dir) ox))
+                (define dy (fl* (vec2-y dir) oy))
+                (values (vec2 dx dy)
+                        (vec2 (fl* -1.0 dx) (fl* -1.0 dy)))]))
+            (eprintf "~v collides with ~v: dump ~v\n"
+                     e ep
+                     `([cx ,cx cy ,cy]
+                       [hw ,hw hh ,hh]
+                       [cxp ,cxp cyp ,cyp]
+                       [hwp ,hwp hhp ,hhp]
+                       [x-axis ,x-axis]
+                       [cw ,cw]
+                       [y-axis ,y-axis]
+                       [ch ,ch]
+                       [ox ,ox]
+                       [oy ,oy]
+                       [diff ,diff]
+                       [dir ,dir]
+                       [e-ep ,e-ep]
+                       [ep-e ,ep-e]))
+            (i! e 'left ep e-ep)
+            (i! ep 'right e ep-e))))
       (define (compute-collisions! l)
         (for-each compute-collision! l))
       (for* ([cx (in-range mx Mx)]
@@ -369,25 +434,27 @@
                       (λ (old)
                         (compute-collisions! old)
                         (cons e old))
-                      '()))
-      (for ([ep (in-set collisions)])
-        (define-values (dp) (c ep))
-        (i! e dp)
-        (i! ep d))]))
+                      '()))]))
 
   (define Bouncing
     (processor
-     #:components [[v Velocity] [i Collided]]
+     #:components [[p Position] [v Velocity] [i Collided] [c Collideable]]
      #:query [e (and v? i?)]
-     [(define-values (dx dy) (v e))
-      (define-values (od) (i e))
-      (match od
-        ['horizontal
-         (v! e (fl* -1.0 dx) dy)]
-        ['vertical
-         (v! e dx (fl* -1.0 dy))]
-        [_
-         (v! e (fl* -1.0 dx) (fl* -1.0 dy))])
+     [(define-values (x y) (p e))
+      (define-values (dx dy) (v e))
+      (define-values (who-am-i other-guy sep-vec) (i e))
+      (p! e
+          (fl+ x (vec2-x sep-vec))
+          (fl+ y (vec2-y sep-vec)))
+      (v! e
+          (fl* (if (fl= 0.0 (vec2-x sep-vec))
+                   1.0
+                   -1.0)
+               dx)
+          (fl* (if (fl= 0.0 (vec2-y sep-vec))
+                   1.0
+                   -1.0)
+               dy))
       (i^ e)]))
 
   (define (Drawing vs)
@@ -404,6 +471,20 @@
                 (filled-rectangle (fl* 2.0 hw) (fl* 2.0 hh)))
         (unbox vs)))]))
 
+  (define Testing
+    (processor
+     #:components [[p Position] [c Collideable]]
+     #:query [e p?]
+     [(define-values (cx cy) (p e))
+      (define-values (d) (c e))
+      (when (and (eq? 'ball d)
+                 (or (fl< cx 0.0)
+                     (fl< Width.0 cx)
+                     (fl< cy 0.0)
+                     (fl< Height.0 cy)))
+        (error 'Testing "object ~v out of bounds at ~v,~v"
+               e cx cy))]))
+
   (define (Game vs)
     (system
      #:components
@@ -411,7 +492,8 @@
      #:processor-order
      (list (list Moving)
            (list (Drawing vs) (Collision))
-           (list Bouncing))))
+           (list Bouncing)
+           (list Testing))))
 
   (define Width 800)
   (define Width.0 (fx->fl Width))
@@ -422,7 +504,7 @@
     (procedure
      #:components [[p Position] [s Shape] [v Velocity] [c Collideable]]
      [(define (wall! cx cy hw hh d)
-        (define w (new!))
+        (define w (new! 'wall))
         (p! w cx cy)
         (s! w hw hh)
         (c! w d))
@@ -440,7 +522,7 @@
              'vertical)
 
       (for ([i (in-range 50)])
-        (define b (new!))
+        (define b (new! 'ball))
         (define hw (fl/ WallThickness 8.0))
         (define hh hw)
         (define dir
