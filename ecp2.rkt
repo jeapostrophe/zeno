@@ -5,36 +5,34 @@
                      syntax/name)
          racket/match
          racket/set
-         racket/stxparam)
+         racket/stxparam
+         "object-pool.rkt")
 
-(struct *component (id init alloc free! ref set!)
-         #:methods gen:custom-write
-         [(define (write-proc v port mode)
-            (when mode 
-              (write-string 
-               (format "<component:~a>" (*component-id v)) port)))])
+(struct *component (id fields init alloc! free! ref set!)
+        #:methods gen:custom-write
+        [(define (write-proc v port mode)
+           (when mode
+             (write-string
+              (format "<component:~a>" (*component-id v)) port)))])
 (define (make-component id fields)
   (*component
-   id
+   id fields
    (λ ()
-     (make-hasheq))
-   (λ (com e)
-     e)
-   (λ (com e)
-     (void))
-   (λ (com e-ref)
+     (gvector))
+   (λ (com-data e)
+     (gvector-alloc! com-data))
+   (λ (com-data e-ref)
+     (gvector-free! com-data e-ref))
+   ;; xxx don't use lists but specialize to number of arguments
+   (λ (com-data e-ref)
      (vector->values
-      (hash-ref com e-ref
-                (λ ()
-                  (error '*component-ref
-                         "Key ~v not found in ~e for component with fields ~v"
-                         e-ref com fields)))))
-   (λ (com e-ref . vals)
-     (hash-set! com e-ref (list->vector vals)))))
+      (gvector-ref com-data e-ref)))
+   (λ (com-data e-ref . vals)
+     (gvector-set! com-data e-ref (list->vector vals)))))
 (define-syntax (component stx)
   (syntax-parse stx
-    [(_ ([f:id (~and type (~or #:fixnum #:flonum #:racket))]
-         ...))
+    [(_ (f:id ...)
+        (~and type (~or #:fixnum #:flonum #:racket)))
      (with-syntax ([name (or (syntax-local-infer-name #'stx)
                              (gensym 'component))])
        (syntax/loc stx
@@ -149,6 +147,7 @@
          (λ (e)
            (or (left-c e) (right-c e)))))]))
 
+;; xxx change to gvector
 (define (make-entities)
   (make-hasheq))
 (define (entities-new! es)
@@ -171,15 +170,13 @@
   (hash-has-key? (entities-ref es e) com))
 (define (entities-component-*ref es e com)
   (define e-ht (entities-ref es e))
-  (hash-ref e-ht com
-            (λ ()
-              (error 'entities-component-*ref
-                     "Key ~v not found in ~v for ~v"
-                     com e-ht e))))
+  (hash-ref e-ht com #f))
 (define (entities-component-ref es e com)
-  (match-define (vector changed?-box com-ref)
-                (entities-component-*ref es e com))
-  com-ref)
+  (match (entities-component-*ref es e com)
+    [#f 
+     #f]
+    [(vector changed?-box com-ref)
+     com-ref]))
 ;; xxx this is inefficient
 (define (entities-reset-changed! es)
   (for* ([e-data (in-hash-values es)]
@@ -227,6 +224,7 @@
         (set-remove! es e)))))
 
 (struct *system (es cm qc po-box))
+(struct *process-data (query work))
 (define (system #:components coms
                 #:processor-order po)
   (define po-box (box #f))
@@ -239,8 +237,7 @@
               (for/list ([p (in-list layer)])
                 (define-values (query work) (p sys))
                 (query-cache-add! qc query)
-                ;; xxx don't use vector
-                (vector query work))))
+                (*process-data query work))))
   sys)
 (define (bind-new! sys)
   (define es (*system-es sys))
@@ -256,7 +253,7 @@
 (define (bind-component sys com)
   (define es (*system-es sys))
   (define qc (*system-qc sys))
-  (match-define (*component _ _ c:alloc c:free! c:ref c:set!) com)
+  (match-define (*component _ _ _ c:alloc c:free! c:ref c:set!) com)
   (define com-data (component-mapping-ref (*system-cm sys) com))
   (define (cb:ref e)
     (define e-ref (entities-component-ref es e com))
@@ -265,14 +262,13 @@
     (entities-component-has? es e com))
   (define (cb:set! e . vals)
     (define e-ref
-      (cond
-       ;; xxx if i disallow #f as a com-ref, this could be more efficient
-       [(entities-component-has? es e com)
-        (entities-component-ref es e com)]
-       [else
-        (define com-ref (c:alloc com-data e))
-        (entities-component-alloc! es e com com-ref)
-        com-ref]))
+      (match (entities-component-ref es e com)
+        [#f
+         (define com-ref (c:alloc com-data e))
+         (entities-component-alloc! es e com com-ref)
+         com-ref]
+        [e-ref
+         e-ref]))
     (entities-component-changed! es e com)
     (query-cache-entity-add! qc e com)
     (apply c:set! com-data e-ref vals))
@@ -289,7 +285,7 @@
     (for ([q*p (in-list ps)])
       (system-process sys q*p))))
 (define (system-process sys cs*i)
-  (match-define (vector query process-entity) cs*i)
+  (match-define (*process-data query process-entity) cs*i)
   (for ([e (in-list (query-cache-entities (*system-qc sys) query))])
     (process-entity e)))
 
@@ -302,18 +298,17 @@
            racket/flonum)
 
   (define Position
-    (component ([cx #:flonum] [cy #:flonum])))
+    (component (cx cy) #:flonum))
   (define Velocity
-    (component ([dx #:flonum] [dy #:flonum])))
+    (component (dx dy) #:flonum))
   (define Shape
-    (component ([hw #:flonum] [hh #:flonum])))
+    (component (hw hh) #:flonum))
   (define Collideable
-    (component ([data #:racket])))
+    (component (data) #:racket))
   (define InCollisionDB
-    (component ([mx #:fixnum] [Mx #:fixnum]
-                [my #:fixnum] [My #:fixnum])))
+    (component (mx Mx my My) #:fixnum))
   (define Collided
-    (component ([other-data #:racket])))
+    (component (other-data) #:racket))
 
   (define Moving
     (processor
@@ -362,6 +357,7 @@
         (unless (set-member? collisions ep)
           (define-values (cxp cyp) (p ep))
           (define-values (hwp hhp) (s ep))
+          ;; xxx compute separating vector
           (when (and (overlaps? cx hw cxp hwp)
                      (overlaps? cy hh cyp hhp))
             (set-add! collisions ep))))
@@ -445,15 +441,17 @@
 
       (for ([i (in-range 50)])
         (define b (new!))
+        (define hw (fl/ WallThickness 8.0))
+        (define hh hw)
         (define dir
-          (make-polar (fl/ WallThickness 2.0)
+          (make-polar (fl/ WallThickness 4.0)
                       (fl* pi (fl/ (fx->fl (random 360)) 360.0))))
         (p! b
-            (fx->fl (fx+ 100 (random 200)))
-            (fx->fl (fx+ 100 (random 200))))
+            (fx->fl (random Width))
+            (fx->fl (random Height)))
         (c! b 'ball)
         (v! b (real-part dir) (imag-part dir))
-        (s! b 5.0 5.0))]))
+        (s! b hw hh))]))
 
   (require lux
            lux/chaos/gui
@@ -491,4 +489,3 @@
      (define sys (Game vs))
      (Init! sys)
      (fiat-lux (example (make-gui/val) vs sys)))))
-
