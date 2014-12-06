@@ -122,6 +122,7 @@
   (vector-ref (*system-com->ht sys) comi))
 
 (define (system-iterate sys)
+  (entities-reset-changed! (*system-es sys))
   (for ([ps (in-list (unbox (*system-pob sys)))])
     ;; xxx can do each level of this tree in parallel
     (for ([cs*i (in-list ps)])
