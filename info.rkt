@@ -7,5 +7,5 @@
                      "racket-doc"
                      "scribble-lib"
                      ))
-(define scribblings '(("zeno.scrbl" ())))
+(define scribblings '(("zeno.scrbl" () ("Animation"))))
 (define pkg-authors '(jay))
